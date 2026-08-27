@@ -1,0 +1,101 @@
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◆</span>
+      <div>
+        <div class="title">Project Nexus</div>
+        <div class="subtitle">Inspection Knowledge Assistant</div>
+      </div>
+    </div>
+    <div class="tenant">
+      <button class="newchat" (click)="newConversation()" title="Start a new conversation">+ New chat</button>
+      <label>Tenant</label>
+      <select [(ngModel)]="tenantId" (change)="onTenantChange()">
+        <option *ngFor="let t of tenants" [value]="t.id">{{ t.label }}</option>
+      </select>
+      <span class="usage" *ngIf="tokenReady">searches today: {{ searchesToday }}</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Left: conversation -->
+    <section class="chat-col">
+      <div class="thread">
+        <div class="welcome" *ngIf="!messages.length">
+          <h2>Ask about the inspection reports</h2>
+          <p>I keep context across the conversation — ask a follow-up and I'll remember what we were discussing.</p>
+          <div class="examples">
+            <button (click)="example('What issues were found on the LT mini pillars?')">What issues were found on the LT mini pillars?</button>
+            <button (click)="example('Which vendors had rejected lots?')">Which vendors had rejected lots?</button>
+          </div>
+          <p class="hint">Then try a follow-up like <em>"what about the cables?"</em></p>
+        </div>
+
+        <div class="msg" *ngFor="let m of messages" [class.user]="m.role === 'user'" [class.assistant]="m.role === 'assistant'">
+          <div class="avatar">{{ m.role === 'user' ? 'You' : 'AI' }}</div>
+          <div class="bubble">
+            <div class="pending" *ngIf="m.pending"><span></span><span></span><span></span></div>
+            <p *ngIf="!m.pending" class="text">
+              <ng-container *ngFor="let seg of answerSegments(m.content)">
+                <span *ngIf="!seg.cite">{{ seg.text }}</span>
+                <span *ngIf="seg.cite" class="cite">{{ seg.text }}</span>
+              </ng-container>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="alert" *ngIf="error">{{ error }}</div>
+
+      <div class="composer">
+        <textarea
+          [(ngModel)]="input"
+          (keydown.enter)="$event.preventDefault(); send()"
+          [disabled]="sending || !tokenReady"
+          placeholder="Message the assistant… (Enter to send)"
+          rows="1"></textarea>
+        <div class="composer-row">
+          <label class="chk"><input type="checkbox" [(ngModel)]="generate" /> Generate answer</label>
+          <button class="go" (click)="send()" [disabled]="sending || !tokenReady || !input.trim()">
+            {{ sending ? 'Thinking…' : 'Send' }}
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right: filters + sources -->
+    <aside class="side-col">
+      <div class="panel filters">
+        <div class="panel-head">Filters</div>
+        <label>Site</label>
+        <input [(ngModel)]="filters.site" placeholder="e.g. IIM Ahmedabad" />
+        <label>Vendor</label>
+        <input [(ngModel)]="filters.vendor" placeholder="e.g. ABB India Limited" />
+        <label>Verdict</label>
+        <select [(ngModel)]="filters.verdict">
+          <option *ngFor="let v of verdictOptions" [value]="v">{{ v || 'Any' }}</option>
+        </select>
+      </div>
+
+      <div class="panel sources">
+        <div class="panel-head">
+          Sources <span class="count" *ngIf="latestResults.length">{{ latestResults.length }}</span>
+        </div>
+        <div class="src-empty" *ngIf="!latestResults.length">Grounded sources for the latest answer appear here.</div>
+        <div class="src" *ngFor="let r of latestResults">
+          <div class="src-top">
+            <span class="badge" [class]="verdictClass(r.verdict)">{{ r.verdict || '—' }}</span>
+            <span class="score">{{ r.score | number: '1.3-3' }}</span>
+          </div>
+          <div class="src-path">{{ r.sectionPath }}</div>
+          <div class="src-meta">
+            <span *ngIf="r.vendor">{{ r.vendor }}</span>
+            <span *ngIf="r.site">· {{ r.site }}</span>
+          </div>
+          <div class="src-content">{{ r.content }}</div>
+          <div class="src-cite">[{{ shortSop(r.sopId) }}]</div>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>

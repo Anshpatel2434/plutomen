@@ -1,0 +1,168 @@
+# ---------------------------------------------------------------------------
+# plutoman-rag local infrastructure
+#
+# Brings up the three backing services our RAG extension needs:
+#   - postgres : shared, derived retrieval index (pgvector-enabled image)
+#   - redis    : BullMQ queue backing ingestion
+#   - ollama   : self-hosted open-source inference (embeddings + generation)
+#
+# After `docker compose up -d`, pull the models into the ollama container:
+#   docker compose exec ollama ollama pull nomic-embed-text
+#   docker compose exec ollama ollama pull mistral
+# (swap `mistral` for `llama3.3` if you set GEN_MODEL=llama3.3)
+# ---------------------------------------------------------------------------
+services:
+  postgres:
+    # pgvector/pgvector ships stock Postgres 16 with the `vector` extension available.
+    image: pgvector/pgvector:pg16
+    container_name: plutoman-postgres
+    # Phase-2 (cont.) READ/WRITE SPLIT: enable streaming replication on the
+    # PRIMARY so `postgres-replica` can clone + stream from it. These are the
+    # standard physical-replication settings; they are harmless when no replica
+    # is attached, so leaving them on is safe for the single-node demo too.
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "max_wal_senders=10"
+      - "-c"
+      - "max_replication_slots=10"
+      - "-c"
+      - "hot_standby=on"
+    environment:
+      POSTGRES_DB: plutoman
+      POSTGRES_USER: plutoman_owner
+      POSTGRES_PASSWORD: owner_password
+    ports:
+      # Host 5544 (not 5432) to avoid colliding with a native Postgres install.
+      - "5544:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Optional: drop *.sql here to auto-run on FIRST init of an empty volume.
+      # We instead run migrations explicitly via `npm run migrate` for control.
+      - ./db/migrations:/docker-entrypoint-initdb.d/migrations:ro
+      # Phase-2 (cont.): replication bootstrap — creates the `replicator` role
+      # and opens a pg_hba `replication` rule. These run ONLY on FIRST init of an
+      # empty pgdata volume (files placed at the TOP level of initdb.d run;
+      # the migrations mount above is a subdir and is intentionally NOT run).
+      - ./db/replication/init-replication.sql:/docker-entrypoint-initdb.d/init-replication.sql:ro
+      - ./db/replication/init-replication.sh:/docker-entrypoint-initdb.d/init-replication.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plutoman_owner -d plutoman"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # -------------------------------------------------------------------------
+  # PgBouncer (Phase-2): connection pooler in front of Postgres.
+  #
+  # CORRECTNESS-CRITICAL: POOL_MODE MUST be `transaction`. This is safe ONLY
+  # because db.ts:withTenant() scopes the tenant GUC with
+  # set_config('app.tenant_id', ..., is_local=true) inside a BEGIN/COMMIT — the
+  # tenant context lives and dies within a single transaction, so a pooled
+  # backend never leaks tenant context to the next client that borrows it.
+  #   - `session` pooling would work but waste the pool (one backend per client).
+  #   - `statement` pooling would BREAK multi-statement transactions (and thus
+  #     withTenant's SET LOCAL + queries + COMMIT). Do not use it.
+  # Do NOT change withTenant's transaction wrapping, and do NOT introduce named
+  # prepared statements or session-level SET (see the note in src/db.ts).
+  #
+  # The APP connects here (host 6432). MIGRATIONS bypass this pooler and connect
+  # directly to Postgres (host 5544) because DDL/session features are incompatible
+  # with transaction pooling (see .env.example: MIGRATION_DATABASE_URL).
+  pgbouncer:
+    image: edoburu/pgbouncer
+    container_name: plutoman-pgbouncer
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: plutoman_app
+      DB_PASSWORD: app_password
+      DB_NAME: plutoman
+      POOL_MODE: transaction
+      AUTH_TYPE: scram-sha-256
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 25
+      LISTEN_PORT: 6432
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
+  # postgres-replica (Phase-2 cont.): BEST-EFFORT streaming read replica for
+  # local validation of the app-side read/write split. The app routes READS
+  # (hybrid retrieval) here via READ_DATABASE_URL and WRITES (ingest, audit) to
+  # the primary. The app works fine WITHOUT this service — leave READ_DATABASE_URL
+  # unset and reads fall back to the primary.
+  #
+  # On first start (empty PGDATA) it clones the primary with `pg_basebackup -R`
+  # (which writes standby.signal + primary_conninfo), then execs the normal
+  # postgres entrypoint, which starts it as a hot standby streaming from primary.
+  # If PGDATA is already populated it just starts.
+  #
+  # NOTE: this is finicky. It depends on the primary having been initialized on a
+  # FRESH volume so init-replication.{sql,sh} ran (role + pg_hba rule). If the
+  # replica fails to come up, see README "read/write split" for the manual
+  # pg_basebackup fallback. `$$` escapes `$` so it reaches the container shell
+  # (compose would otherwise interpolate it).
+  postgres-replica:
+    image: pgvector/pgvector:pg16
+    container_name: plutoman-postgres-replica
+    environment:
+      # Used by the postgres entrypoint; PGDATA is already set by the image.
+      POSTGRES_PASSWORD: owner_password
+    entrypoint:
+      - "bash"
+      - "-c"
+      - |
+        set -e
+        if [ -z "$$(ls -A "$$PGDATA" 2>/dev/null)" ]; then
+          echo "[replica] PGDATA empty; cloning primary via pg_basebackup..."
+          until pg_isready -h postgres -p 5432 -U replicator -d plutoman; do
+            echo "[replica] waiting for primary to accept connections..."; sleep 2;
+          done
+          mkdir -p "$$PGDATA"
+          chown postgres:postgres "$$PGDATA"
+          chmod 0700 "$$PGDATA"
+          PGPASSWORD=replicator_password gosu postgres pg_basebackup \
+            -h postgres -p 5432 -U replicator -D "$$PGDATA" -Fp -Xs -P -R
+          echo "[replica] base backup complete; starting as hot standby."
+        else
+          echo "[replica] PGDATA already populated; starting as-is."
+        fi
+        exec docker-entrypoint.sh postgres
+    ports:
+      # Host 5545 -> replica 5432. Point READ_DATABASE_URL here (as the app role)
+      # to route reads to the replica.
+      - "5545:5432"
+    volumes:
+      - pgdata_replica:/var/lib/postgresql/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    container_name: plutoman-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: plutoman-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollamadata:/root/.ollama
+    # After `up`, remember to pull the models (see header comment).
+
+volumes:
+  pgdata:
+  pgdata_replica:
+  redisdata:
+  ollamadata:
