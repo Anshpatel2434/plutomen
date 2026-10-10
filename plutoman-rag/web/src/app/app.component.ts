@@ -146,6 +146,9 @@ export class AppComponent implements OnInit {
 
   verdictClass(v: string | null): string {
     if (!v) return 'neutral';
+    // CONDITIONAL ("retest pending", "subject to rectification") is neither a
+    // pass nor a fail — don't colour it as a pass.
+    if (v.toUpperCase() === 'CONDITIONAL') return 'neutral';
     return v.toUpperCase().includes('NOT') ? 'fail' : 'pass';
   }
 
