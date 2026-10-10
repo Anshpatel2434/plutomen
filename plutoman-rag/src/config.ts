@@ -30,6 +30,11 @@ const ConfigSchema = z.object({
   // conversational coherence in generation. History is NEVER a source of facts.
   CHAT_HISTORY_TURNS: z.coerce.number().int().positive().default(6),
 
+  // --- Keyword ranker (eval change 8) ------------------------------------
+  // Share (0..1) of a question's rarity-weighted (IDF) words a chunk must
+  // contain to count as a keyword match. See src/retrieval/keywords.ts.
+  KW_MIN_MATCH_SHARE: z.coerce.number().min(0).max(1).default(0.4),
+
   // --- Phase-3: JWT hardening ---------------------------------------------
   // Optional issuer/audience validation. When set, jwt.verify enforces the
   // `iss` / `aud` claims; when unset, the check is skipped (HS256 default).

@@ -20,6 +20,7 @@
  */
 import { withTenantRead } from "../db";
 import { embed, toVectorLiteral } from "../embeddings";
+import { keywordTerms } from "./keywords";
 
 /** Optional metadata filters, applied as additional SQL predicates. */
 export interface RetrievalFilters {
@@ -85,6 +86,11 @@ export async function hybridSearch(
   const [queryVec] = await embed([queryText], "query");
   const vecLiteral = toVectorLiteral(queryVec);
 
+  // Keyword side (eval change 8): the question's words that occur in this
+  // tenant's index, plus typo corrections from the tenant's own lexicon
+  // ("cabel" -> "cabl"), each weighted by rarity (IDF).
+  const kw = await keywordTerms(tenantId, queryText);
+
   // Build optional metadata predicates. These are shared by both CTEs so the
   // filter is applied consistently to dense and sparse candidate pools.
   // Params order (fixed): $1 queryVec, $2 k, $3 queryText, $4 topN, $5 tenantId,
@@ -139,8 +145,36 @@ export async function hybridSearch(
   // tenantClause is redundant with RLS by design — defense in depth.
   const baseWhere = ["modality = 'text'", tenantClause, ...filterClauses].join(" AND ");
 
+  params.push(kw.terms);
+  const termsParam = `$${params.length}`;
+  params.push(kw.idfs);
+  const idfsParam = `$${params.length}`;
+  params.push(kw.minScore);
+  const minScoreParam = `$${params.length}`;
+
+  // KEYWORD RANKER (eval change 8). Was plainto_tsquery = ALL words must
+  // appear, so one word a chunk lacks ("pillar", "prepared") zeroed the keyword
+  // match. Now each matched word adds its IDF weight, and a chunk needs at
+  // least MIN_MATCH_SHARE of the question's total weight (minimum-should-match)
+  // so ubiquitous words (every chunk's POID / vendor prefix) cannot make every
+  // chunk a "match". Terms are lexemes already produced by Postgres' own
+  // 'english' parser; quote_literal makes each a single-lexeme tsquery.
+  // Tie-break: chunks containing ALL the words (the old AND query) first.
   const sql = `
-    WITH vec AS (
+    WITH terms AS (
+      SELECT quote_literal(t.term)::tsquery AS tq, t.idf
+      FROM unnest(${termsParam}::text[], ${idfsParam}::float8[]) AS t(term, idf)
+    ),
+    kwscore AS (
+      SELECT chunks.id,
+             sum(terms.idf) AS matched,
+             ts_rank(chunks.content_tsv, plainto_tsquery('english', $3)) AS all_words
+      FROM chunks
+      JOIN terms ON chunks.content_tsv @@ terms.tq
+      WHERE ${baseWhere}
+      GROUP BY chunks.id
+    ),
+    vec AS (
       SELECT id,
              ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rnk
       FROM chunks
@@ -150,12 +184,13 @@ export async function hybridSearch(
     ),
     kw AS (
       SELECT id,
-             ROW_NUMBER() OVER (
-               ORDER BY ts_rank(content_tsv, plainto_tsquery('english', $3)) DESC
-             ) AS rnk
-      FROM chunks
-      WHERE ${baseWhere}
-        AND content_tsv @@ plainto_tsquery('english', $3)
+             ROW_NUMBER() OVER (ORDER BY matched DESC, all_words DESC, id) AS rnk
+      FROM kwscore
+      WHERE matched >= ${minScoreParam}::float8
+      -- ORDER BY before LIMIT: without it Postgres may keep ANY k matches and
+      -- drop the best-ranked ones (harmless under the old AND query's few
+      -- matches, a real bug once any-word matching returns many).
+      ORDER BY rnk
       LIMIT $2
     ),
     fused AS (
