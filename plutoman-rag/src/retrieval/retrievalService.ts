@@ -22,6 +22,7 @@ import { enqueueIngest } from "../ingestion/queue";
 import { hybridSearch, rerank, RetrievalFilters } from "./hybrid";
 import { generateAnswer } from "./generate";
 import { condenseQuery } from "./condense";
+import { resolveEntities, resolveChatEntities } from "./entities";
 import {
   createConversation,
   conversationExists,
@@ -182,10 +183,14 @@ router.post("/search", requireAuth, rateLimit, async (req: Request, res: Respons
     }
   }
 
-  // 1) Hybrid retrieval (RLS-scoped to tenant inside hybridSearch).
+  // 1) Resolve reports named in the question (job / POID / vendor / report
+  //    type) into hard filters, then hybrid retrieval (RLS-scoped to tenant
+  //    inside hybridSearch). The resolution is deterministic for a given query
+  //    and catalog, and ingest invalidates both, so the cache key stays valid.
+  const resolved = await resolveEntities(tenantId, query);
   const rawHits = await hybridSearch(tenantId, query, {
     topN: topK ?? 10,
-    filters: filters as RetrievalFilters | undefined,
+    filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
   });
 
   // 2) Reranking hook (identity no-op in Phase-1).
@@ -217,6 +222,8 @@ router.post("/search", requireAuth, rateLimit, async (req: Request, res: Respons
     answer: generation.answer,
     citations: generation.citations,
     results: hits,
+    // Which reports the question was narrowed to (empty object = no narrowing).
+    appliedFilters: resolved.applied,
   };
 
   // 5) Populate the cache on a miss. `cached: true` is added only when SERVING
@@ -287,10 +294,13 @@ router.post("/chat", requireAuth, rateLimit, async (req: Request, res: Response)
   //    on empty history or any Ollama error (never blocks the chat).
   const searchQuery = await condenseQuery(history, message);
 
-  // 4) Hybrid retrieval (RLS-scoped) on the rewritten query.
+  // 4) Resolve the report(s) the turn is about — from the user's own message,
+  //    plus the rewrite unless the message is contrastive ("the OTHER Finolex
+  //    job") — then hybrid retrieval (RLS-scoped) on the rewritten query.
+  const resolved = await resolveChatEntities(tenantId, message, searchQuery);
   const rawHits = await hybridSearch(tenantId, searchQuery, {
     topN: topK ?? 8,
-    filters: filters as RetrievalFilters | undefined,
+    filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
   });
 
   // 5) Reranking hook (identity no-op in Phase-1).
@@ -338,6 +348,7 @@ router.post("/chat", requireAuth, rateLimit, async (req: Request, res: Response)
     citations: generation.citations,
     results: hits,
     rewrittenQuery: searchQuery,
+    appliedFilters: resolved.applied,
   });
 });
 

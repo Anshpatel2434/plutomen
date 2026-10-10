@@ -26,6 +26,15 @@ export interface RetrievalFilters {
   site?: string;
   vendor?: string;
   verdict?: string;
+  // --- Resolved from the question by entities.ts (eval change 5) ----------
+  /** Job IDs named in the question; OR-ed with poids (either identifies a report). */
+  jobIds?: string[];
+  /** POIDs named in the question. */
+  poids?: string[];
+  /** Vendors named in the question (exact stored vendor strings). */
+  vendors?: string[];
+  /** Report types (documents.title, e.g. "LT_Mini_Pillar") named in the question. */
+  reportTypes?: string[];
 }
 
 export interface RetrievalHit {
@@ -101,6 +110,30 @@ export async function hybridSearch(
   if (f.verdict) {
     params.push(f.verdict);
     filterClauses.push(`verdict = $${params.length}`);
+  }
+  // Entity filters (eval change 5). A Job ID or a POID each identifies a
+  // report, so they are OR-ed; everything else is AND-ed.
+  const idClauses: string[] = [];
+  if (f.jobIds && f.jobIds.length > 0) {
+    params.push(f.jobIds);
+    idClauses.push(`job_id = ANY($${params.length}::text[])`);
+  }
+  if (f.poids && f.poids.length > 0) {
+    params.push(f.poids);
+    idClauses.push(`poid = ANY($${params.length}::text[])`);
+  }
+  if (idClauses.length > 0) filterClauses.push(`(${idClauses.join(" OR ")})`);
+  if (f.vendors && f.vendors.length > 0) {
+    params.push(f.vendors);
+    filterClauses.push(`vendor = ANY($${params.length}::text[])`);
+  }
+  if (f.reportTypes && f.reportTypes.length > 0) {
+    params.push(f.reportTypes);
+    // documents is RLS-scoped too; the explicit tenant predicate is defense in depth.
+    filterClauses.push(
+      `document_id IN (SELECT d.id FROM documents d
+                        WHERE d.tenant_id = $5 AND d.title = ANY($${params.length}::text[]))`
+    );
   }
   // modality = 'text' keeps Phase-1 to text chunks (multimodal is future work).
   // tenantClause is redundant with RLS by design — defense in depth.
