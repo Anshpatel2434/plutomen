@@ -1,6 +1,38 @@
-# Rollback — golden-eval changes 1–3
+# Rollback — golden-eval changes
 
 Branch: `testing/pipeline-docker`. **`main` is not affected by any of this.**
+
+## Changes 5 and 8 (retrieval only — no database changes)
+
+| Commit | What it changes |
+|---|---|
+| `781d83d` | **Eval change 8** — rarity-weighted any-word keyword search, typo correction, `KW_MIN_MATCH_SHARE` setting |
+| `0bb01a8` | **Eval change 5** — job / POID / vendor / report-type filters resolved from the question; `appliedFilters` in responses |
+| `ed18a01` | groundwork for both — tenant-scoped derived-data cache, cleared on ingest |
+| tag `pre-eval-5-8` (`032df8c`) | the state before this round |
+
+These change only how retrieval queries the existing index: **no migration, no
+re-ingest, no snapshot needed.** Verified on 10 Oct 2026: #8 alone, #5 alone and
+the whole range each revert cleanly, compile and pass the offline tests.
+
+```bash
+git revert --no-edit 781d83d                     # undo #8 only
+git revert --no-edit 0bb01a8                     # undo #5 only
+git revert --no-edit pre-eval-5-8..HEAD          # undo #5, #8 and the groundwork
+npm run build                                    # then restart the API
+```
+
+Revert `ed18a01` only together with both #5 and #8 (they use it). Leftover
+`derived:*` keys in Redis are harmless after a rollback and expire within 5
+minutes; to clear them at once:
+`docker exec plutoman-redis sh -c "redis-cli --scan --pattern 'derived:*' | xargs -r redis-cli DEL"`.
+
+To soften #8 without a code change, set `KW_MIN_MATCH_SHARE` in `.env` (0..1;
+lower = more keyword matches) and restart.
+
+---
+
+## Changes 1–3 (indexing — database changes)
 
 | Commit | What it changes | Index needs re-ingest? |
 |---|---|---|
