@@ -27,9 +27,18 @@ export interface IngestJobData {
   parsedPayload?: { xlsxBase64: string };
 }
 
+/**
+ * The producer's Redis connection. Kept in a variable (not inlined) because
+ * BullMQ does NOT close a connection instance that was passed in — only ones it
+ * created itself — so `ingestQueue.close()` alone leaves this socket open and
+ * keeps short-lived scripts (e.g. ingest:demo) from ever exiting. closeQueue()
+ * below closes both.
+ */
+const producerConnection = createRedisConnection();
+
 /** Singleton producer queue. */
 export const ingestQueue = new Queue<IngestJobData>(INGEST_QUEUE_NAME, {
-  connection: createRedisConnection(),
+  connection: producerConnection,
   defaultJobOptions: {
     attempts: 3,
     backoff: { type: "exponential", delay: 2000 },
@@ -37,6 +46,12 @@ export const ingestQueue = new Queue<IngestJobData>(INGEST_QUEUE_NAME, {
     removeOnFail: 5000,
   },
 });
+
+/** Graceful shutdown: close the producer queue AND its Redis connection. */
+export async function closeQueue(): Promise<void> {
+  await ingestQueue.close();
+  await producerConnection.quit();
+}
 
 /** Convenience producer used by the API + demo script. */
 export async function enqueueIngest(data: IngestJobData): Promise<string> {

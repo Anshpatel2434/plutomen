@@ -36,7 +36,7 @@ services:
       POSTGRES_PASSWORD: owner_password
     ports:
       # Host 5544 (not 5432) to avoid colliding with a native Postgres install.
-      - "5544:5432"
+      - "${POSTGRES_HOST_PORT:-5544}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Optional: drop *.sql here to auto-run on FIRST init of an empty volume.
@@ -86,7 +86,7 @@ services:
       DEFAULT_POOL_SIZE: 25
       LISTEN_PORT: 6432
     ports:
-      - "6432:6432"
+      - "${PGBOUNCER_HOST_PORT:-6432}:6432"
     depends_on:
       postgres:
         condition: service_healthy
@@ -137,7 +137,7 @@ services:
     ports:
       # Host 5545 -> replica 5432. Point READ_DATABASE_URL here (as the app role)
       # to route reads to the replica.
-      - "5545:5432"
+      - "${POSTGRES_REPLICA_HOST_PORT:-5545}:5432"
     volumes:
       - pgdata_replica:/var/lib/postgresql/data
     depends_on:
@@ -148,7 +148,7 @@ services:
     image: redis:7-alpine
     container_name: plutoman-redis
     ports:
-      - "6379:6379"
+      - "${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - redisdata:/data
 
@@ -156,7 +156,7 @@ services:
     image: ollama/ollama:latest
     container_name: plutoman-ollama
     ports:
-      - "11434:11434"
+      - "${OLLAMA_HOST_PORT:-11434}:11434"
     volumes:
       - ollamadata:/root/.ollama
     # After `up`, remember to pull the models (see header comment).

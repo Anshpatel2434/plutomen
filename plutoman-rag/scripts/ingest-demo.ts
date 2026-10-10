@@ -11,7 +11,7 @@
 import { readdir } from "fs/promises";
 import { resolve, join, basename } from "path";
 import { ingestUpsert } from "../src/ingestion/ingestWorker";
-import { enqueueIngest } from "../src/ingestion/queue";
+import { enqueueIngest, closeQueue } from "../src/ingestion/queue";
 import { closePool } from "../src/db";
 import { invalidateTenant, closeCache } from "../src/cache";
 
@@ -70,6 +70,10 @@ async function main(): Promise<void> {
     // Close the Redis cache client too so the process terminates cleanly
     // (importing invalidateTenant opens a persistent ioredis connection).
     await closeCache();
+    // Importing queue.ts constructs the BullMQ producer Queue, which opens its
+    // own Redis connection at module load. Inline mode never uses it, but if it
+    // is left open the process never exits (hung after "done") — close it too.
+    await closeQueue();
     // eslint-disable-next-line no-console
     console.log(`[ingest:demo] done. tenant="${DEMO_TENANT}"`);
   } else {
