@@ -1,6 +1,31 @@
 # Rollback — golden-eval changes
 
 Branch: `testing/pipeline-docker`. **`main` is not affected by any of this.**
+Current status against the golden set: [GOLDEN_EVAL_STATUS.md](GOLDEN_EVAL_STATUS.md).
+
+## Changes 6 and 7 (answer generation — no database changes)
+
+| Commit | What it changes |
+|---|---|
+| `90fa155` | **Eval change 6** — answer policy as a system prompt, sources grouped by report, instruction-leak guard, `src/llm.ts` |
+| `68e83c5` | a failed request returns a 500 instead of crashing the API |
+| `5c3eb59` | web UI shows `CONDITIONAL` verdicts as neutral |
+| `20d42d2` | **Eval change 7** — citations list only the sources the answer uses |
+| tag `pre-eval-6-7` (`8f8e209`) | the state before this round |
+
+No migration, no re-ingest. Change 6 is the one with mixed results on Mistral 7B
+(see the status file) and reverts on its own:
+
+```bash
+git revert --no-edit 90fa155                     # undo #6 only (keeps #7)
+git revert --no-edit pre-eval-6-7..HEAD          # undo the whole round
+npm run build                                    # then restart the API
+```
+
+If answers are cached in Redis (`CACHE_ENABLED=true`), re-ingesting or waiting
+for the cache TTL clears answers produced by the reverted code.
+
+---
 
 ## Changes 5 and 8 (retrieval only — no database changes)
 
