@@ -39,6 +39,15 @@ app.use(express.json({ limit: "25mb" }));
 // Mount the API.
 app.use("/", router);
 
+// Last-resort error handler: any error forwarded from a route (see asyncRoute
+// in retrievalService.ts) fails THAT request with a generic 500 — no internal
+// details leak to the client — and the process keeps serving everyone else.
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // eslint-disable-next-line no-console
+  console.error("[server] request failed:", err instanceof Error ? err.message : String(err));
+  if (!res.headersSent) res.status(500).json({ error: "internal_error" });
+});
+
 /**
  * Boot sequence (Phase-3): run the isolation self-check BEFORE listening. If the
  * DB connection is unsafe (superuser role, or RLS not enabled+forced on a tenant

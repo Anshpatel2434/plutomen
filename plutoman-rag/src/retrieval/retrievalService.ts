@@ -10,7 +10,7 @@
  * verified JWT (req.auth.tenantId), never from the request body — a client
  * cannot ingest into or search another tenant.
  */
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 import { requireAuth } from "../auth";
@@ -31,6 +31,21 @@ import {
 } from "../conversation";
 
 export const router = Router();
+
+/**
+ * Express 4 does not catch errors thrown from async handlers: a rejected
+ * promise (Ollama returning 500, a DB hiccup) became an unhandled rejection and
+ * Node killed the WHOLE API process — every tenant's requests failed until a
+ * restart. Forward async errors to Express's error middleware (server.ts) so a
+ * failing request fails alone.
+ */
+function asyncRoute(
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<void>
+): (req: Request, res: Response, next: NextFunction) => void {
+  return (req, res, next) => {
+    fn(req, res, next).catch(next);
+  };
+}
 
 // --- schemas ----------------------------------------------------------------
 
@@ -128,7 +143,7 @@ router.post("/dev/token", (req: Request, res: Response) => {
   res.json({ token });
 });
 
-router.post("/ingest", requireAuth, rateLimit, async (req: Request, res: Response) => {
+router.post("/ingest", requireAuth, rateLimit, asyncRoute(async (req: Request, res: Response) => {
   const parsed = IngestBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
@@ -153,9 +168,9 @@ router.post("/ingest", requireAuth, rateLimit, async (req: Request, res: Respons
   });
 
   res.status(202).json({ enqueued: true, jobId });
-});
+}));
 
-router.post("/search", requireAuth, rateLimit, async (req: Request, res: Response) => {
+router.post("/search", requireAuth, rateLimit, asyncRoute(async (req: Request, res: Response) => {
   const parsed = SearchBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
@@ -241,7 +256,7 @@ router.post("/search", requireAuth, rateLimit, async (req: Request, res: Respons
   });
 
   res.json(responseBody);
-});
+}));
 
 /**
  * POST /chat — multi-turn conversational retrieval with memory.
@@ -263,7 +278,7 @@ router.post("/search", requireAuth, rateLimit, async (req: Request, res: Respons
  * nothing) is treated as "not found" and a fresh conversation is created — a
  * client can never attach to or read another tenant's conversation.
  */
-router.post("/chat", requireAuth, rateLimit, async (req: Request, res: Response) => {
+router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res: Response) => {
   const parsed = ChatBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
@@ -350,14 +365,14 @@ router.post("/chat", requireAuth, rateLimit, async (req: Request, res: Response)
     rewrittenQuery: searchQuery,
     appliedFilters: resolved.applied,
   });
-});
+}));
 
 /**
  * GET /usage — today's per-tenant usage counters (searches + approx genTokens),
  * scoped to the VERIFIED tenant from the JWT. Read-only; no rate limit needed.
  */
-router.get("/usage", requireAuth, async (req: Request, res: Response) => {
+router.get("/usage", requireAuth, asyncRoute(async (req: Request, res: Response) => {
   const { tenantId } = req.auth!;
   const usage = await getUsage(tenantId);
   res.json(usage);
-});
+}));
