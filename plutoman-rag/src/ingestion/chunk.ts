@@ -47,14 +47,76 @@ function basic(report: ParsedReport, title: string): string | null {
 }
 
 /**
- * Normalize a verdict-ish value into a canonical token, or null if the value is
- * plainly not a verdict (e.g. a measurement). Handles "Ok", "Not Ok", mixed
- * values like "Canopy -3mm|Not OK" by scanning for a verdict token.
+ * Verdict vocabulary. Order of checks matters — a value is classified by the
+ * FIRST family it matches:
+ *
+ *   1. NOT OK       explicit failure wording. Checked first so a value such as
+ *                   "Flame propagated beyond mark – flammability fail" or
+ *                   "Lot not meeting QAP acceptance criteria" can never fall
+ *                   through to a positive word later in the string.
+ *   2. CONDITIONAL  neither a pass nor a stated fail: "below acceptance; retest
+ *                   pending", "Subject to rectification of minor defects".
+ *                   Callers asking "what did not pass" should use verdict <> 'OK'.
+ *   3. OK           pass / ok / conforms / accepted / cleared / yes.
+ *
+ * Word boundaries are deliberate: `\baccept(ed|able)?\b` matches "accepted"
+ * but NOT "acceptance" (the old /\baccept/ turned "80 MΩ – below acceptance"
+ * into OK). Anything unmatched (measurements, shapes, "Attached") stays null.
  */
-function normalizeVerdict(raw: string): string | null {
-  const v = raw.toLowerCase();
-  if (/\bnot ?ok\b|\breject/.test(v)) return "NOT OK";
-  if (/\bok\b|\baccept|\byes\b/.test(v)) return "OK";
+const NOT_OK_PATTERN = new RegExp(
+  [
+    String.raw`\bnot ?ok\b`,
+    String.raw`\breject(ed|ion)?\b`,
+    String.raw`\bfail(s|ed|ure)?\b`,
+    String.raw`\bnot (meeting|met|conforming|compliant|acceptable|cleared|recommended|verified)\b`,
+    String.raw`\bnon[- ]?(conform\w*|complian\w*)\b`,
+    String.raw`\bbelow (min|minimum|spec|limit)\b`,
+    String.raw`\babove (max|maximum|limit)\b`,
+    String.raw`\bout of (spec|tolerance)\b`,
+    // "Water blocking missing in mid strand layer – deviation / NCR"
+    String.raw`\bmissing\b`,
+    String.raw`\bdeviation\b`,
+    String.raw`\bncr\b`,
+  ].join("|")
+);
+
+const CONDITIONAL_PATTERN = new RegExp(
+  [
+    String.raw`\bretest\b`,
+    String.raw`\bpending\b`,
+    String.raw`\bsubject to\b`,
+    String.raw`\bbelow acceptance\b`,
+    String.raw`\bconditional(ly)?\b`,
+    String.raw`\bunder review\b`,
+  ].join("|")
+);
+
+const OK_PATTERN = new RegExp(
+  [
+    String.raw`\bok\b`,
+    String.raw`\bpass(es|ed)?\b`,
+    String.raw`\baccept(ed|able)?\b`,
+    String.raw`\bconform(s|ed|ing)?\b`,
+    String.raw`\bcomplian(t|ce)\b`,
+    String.raw`\bcleared\b`,
+    String.raw`\brecommended\b`,
+    String.raw`\bverified\b`,
+    String.raw`\bsatisfactory\b`,
+    String.raw`\byes\b`,
+  ].join("|")
+);
+
+/**
+ * Normalize a verdict-ish value into "OK" | "NOT OK" | "CONDITIONAL", or null
+ * if the value is plainly not a verdict (e.g. a bare measurement). Handles
+ * mixed values like "Canopy -3mm|Not OK" by scanning for a verdict token.
+ */
+export function normalizeVerdict(raw: string): string | null {
+  const v = raw.toLowerCase().replace(/[–—]/g, "-").trim();
+  if (!v) return null;
+  if (NOT_OK_PATTERN.test(v)) return "NOT OK";
+  if (CONDITIONAL_PATTERN.test(v)) return "CONDITIONAL";
+  if (OK_PATTERN.test(v)) return "OK";
   return null;
 }
 
@@ -129,7 +191,11 @@ export function chunkReport(report: ParsedReport): ChunkedReport {
     );
   }
   if (c.declaration) {
-    chunks.push(makeConclusionChunk(prefix, "Declaration", c.declaration, null));
+    // Declarations carry the dispatch decision ("Lot cleared for dispatch",
+    // "Material is rejected for the offered lot"), so they get a verdict too.
+    chunks.push(
+      makeConclusionChunk(prefix, "Declaration", c.declaration, normalizeVerdict(c.declaration))
+    );
   }
   for (const extra of c.extra) {
     chunks.push(makeConclusionChunk(prefix, extra.title, extra.answer, normalizeVerdict(extra.answer)));
