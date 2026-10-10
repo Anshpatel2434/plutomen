@@ -1,38 +1,25 @@
 /**
  * Grounded generation over retrieved chunks using self-hosted Ollama.
  *
- * We build a strict prompt: the model must answer ONLY from the supplied context
- * and cite sources as [document page | section], e.g.
- * [POID-4547081947.pdf p.2 | Basic Details > Vendor Name] (falls back to the
- * source id when the report was ingested without its PDF twin). If the context is insufficient it
- * is told to say so, which limits hallucination for an inspection-QA use case.
+ * We build a strict prompt: the model must answer ONLY from the supplied
+ * sources and cite them with short markers ([S1], [S2], ...). After generation
+ * the markers it used become the citations (only those — see citations.ts) and
+ * are rewritten as readable labels, e.g. "[POID-4547081947.pdf p.2]". If the
+ * context is insufficient it is told to say so, which limits hallucination for
+ * an inspection-QA use case.
  */
 import axios from "axios";
 import { config } from "../config";
 import { RetrievalHit } from "./hybrid";
+import { Citation, sourceLabel, marker, renderCitations, citedSources } from "./citations";
 
-export interface Citation {
-  sopId: string;
-  sectionPath: string | null;
-  /** From the report's PDF twin; absent/null when ingested without one. */
-  poid?: string | null;
-  jobId?: string | null;
-  /** Printed page label: "2", "6-7", "cover". */
-  page?: string | null;
-}
-
-/**
- * Human/eval-facing source label. The golden set cites reports as
- * "POID-4547081947.pdf p.2", so use that form when the PDF twin is known and
- * fall back to the source id otherwise.
- */
-export function sourceLabel(c: Citation): string {
-  if (!c.poid) return c.sopId;
-  return c.page ? `${c.poid}.pdf p.${c.page}` : `${c.poid}.pdf`;
-}
+// Re-exported for existing importers (conversation.ts, routes).
+export type { Citation };
+export { sourceLabel };
 
 export interface GenerationResult {
   answer: string;
+  /** Only the sources the answer cites (empty if it cites none). */
   citations: Citation[];
 }
 
@@ -50,12 +37,16 @@ export interface HistoryTurn {
   content: string;
 }
 
-/** Render the retrieved chunks into a numbered, cited context block. */
+/**
+ * Render the retrieved chunks into a context block where each source carries a
+ * short citation marker the model can copy reliably: "[S1] POID-….pdf p.4 |
+ * section", then the chunk text.
+ */
 function buildContext(hits: RetrievalHit[]): string {
   return hits
     .map((h, i) => {
-      const cite = `[${sourceLabel(h.citation)} | ${h.citation.sectionPath ?? "n/a"}]`;
-      return `(${i + 1}) ${cite}\n${h.content}`;
+      const where = `${sourceLabel(h.citation)} | ${h.citation.sectionPath ?? "n/a"}`;
+      return `[${marker(i)}] ${where}\n${h.content}`;
     })
     .join("\n\n");
 }
@@ -87,13 +78,11 @@ export async function generateAnswer(
   hits: RetrievalHit[],
   history: HistoryTurn[] = []
 ): Promise<GenerationResult> {
-  const citations: Citation[] = hits.map((h) => h.citation);
-
   if (hits.length === 0) {
     return {
       answer:
         "I could not find any relevant inspection records for that query in the index.",
-      citations,
+      citations: [],
     };
   }
 
@@ -115,7 +104,9 @@ export async function generateAnswer(
   const prompt = [
     "You are an assistant answering questions about equipment inspection reports.",
     "Answer the QUESTION using ONLY the CONTEXT below. Do not use outside knowledge.",
-    "Cite the sources you rely on inline by copying their [document page | section] tags exactly.",
+    "Each source in the CONTEXT starts with a marker such as [S1]. Cite every fact",
+    "you state with the marker of the source it comes from, e.g. [S1] or [S1][S3].",
+    "Cite only sources you actually used.",
     "If the context does not contain the answer, say you don't have enough information.",
     "The CONVERSATION HISTORY, if any, is only to resolve pronouns and keep the",
     "topic consistent — do NOT treat it as factual evidence for your answer.",
@@ -138,5 +129,7 @@ export async function generateAnswer(
     }
   );
 
-  return { answer: resp.data.response.trim(), citations };
+  // Citations = the sources the answer actually cites; markers become labels.
+  const { text, cited } = renderCitations(resp.data.response.trim(), hits);
+  return { answer: text, citations: citedSources(hits, cited) };
 }
