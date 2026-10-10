@@ -1,8 +1,9 @@
 /**
  * Turn a ParsedReport into retrievable chunks.
  *
- * Chunking strategy: one chunk per meaningful row — each checklist parameter,
- * each observation, and each conclusion field. Every chunk carries:
+ * Chunking strategy: one chunk per meaningful row — one report-details chunk,
+ * each Basic Details row, each checklist parameter, each observation, and each
+ * conclusion field. Every chunk carries:
  *   - section_path : breadcrumb, e.g.
  *       "Characteristics > Visual & Physical Checks > Sheet Steel Thickness & Type"
  *   - question / answer / verdict : structured fields for display + filtering
@@ -155,6 +156,33 @@ export function chunkReport(report: ParsedReport): ChunkedReport {
   const chunks: Chunk[] = [];
   const prefix = tag(metadata);
 
+  // 0a) Report details ("Checklist Details" sheet) — who started/completed the
+  //     inspection and when, site, category, status. Previously parsed only
+  //     into filter metadata and never searchable (golden set Q19). One chunk
+  //     keeps the fields together, since questions ask for them together
+  //     ("who prepared it and when was it started").
+  const detailPairs = Object.entries(cd)
+    .filter(([, v]) => v && v !== "-")
+    .map(([k, v]) => `${k}: ${v}`);
+  if (detailPairs.length > 0) {
+    chunks.push({
+      sectionPath: "Report Details",
+      question: "Report details",
+      answer: detailPairs.join("; "),
+      verdict: null,
+      content: `${prefix}Report details — ${detailPairs.join("; ")}`,
+    });
+  }
+
+  // 0b) Basic Details rows — SAP code, vendor, offered qty, PO number/date,
+  //     AEML and vendor engineers, serial/batch numbers, inspection date.
+  //     Previously used only as metadata, so none of it was retrievable
+  //     (golden set Q02, Q05–Q07, Q26, Q29, Q38, Q39). These are facts, not
+  //     checks, so they never get a verdict.
+  for (const item of report.basicDetails) {
+    chunks.push(makeDetailChunk(prefix, item));
+  }
+
   // 1) Characteristics / Parameter rows — the core inspection checklist.
   for (const item of report.characteristics) {
     chunks.push(makeItemChunk(prefix, "Characteristics", item));
@@ -216,6 +244,25 @@ function makeItemChunk(prefix: string, top: string, item: ChecklistItem): Chunk 
   if (item.notes) bits.push(`- ${item.notes}`);
   const content = `${prefix}${bits.join(" ")}`.trim();
   return { sectionPath, question: item.title, answer: item.answer, verdict, content };
+}
+
+/** Build a chunk for a Basic Details row (a fact about the lot, not a check). */
+function makeDetailChunk(prefix: string, item: ChecklistItem): Chunk {
+  const top = "Basic Details";
+  // The sheet's Section column is usually "Basic Details" too — don't repeat it.
+  const section = item.section && item.section !== top ? item.section : "";
+  const sectionPath = [top, section, item.title].filter(Boolean).join(" > ");
+  const bits: string[] = [`${top} / ${item.title}:`];
+  if (item.answer) bits.push(item.answer);
+  if (item.measurement) bits.push(`(measurement: ${item.measurement})`);
+  if (item.notes) bits.push(`- ${item.notes}`);
+  return {
+    sectionPath,
+    question: item.title,
+    answer: item.answer,
+    verdict: null,
+    content: `${prefix}${bits.join(" ")}`.trim(),
+  };
 }
 
 /** Build a chunk for a Conclusion field. */
