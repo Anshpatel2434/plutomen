@@ -39,7 +39,17 @@ export interface RetrievalHit {
   vendor: string | null;
   content: string;
   score: number;
-  citation: { sopId: string; sectionPath: string | null };
+  /** Report identifiers + printed page from the PDF twin (null if ingested without one). */
+  poid: string | null;
+  jobId: string | null;
+  page: string | null;
+  citation: {
+    sopId: string;
+    sectionPath: string | null;
+    poid: string | null;
+    jobId: string | null;
+    page: string | null;
+  };
 }
 
 export interface HybridOptions {
@@ -122,7 +132,7 @@ export async function hybridSearch(
       FULL OUTER JOIN kw ON vec.id = kw.id
     )
     SELECT c.id, c.sop_id, c.section_path, c.question, c.answer, c.verdict,
-           c.site, c.vendor, c.content, fused.score
+           c.site, c.vendor, c.content, c.poid, c.job_id, c.page, fused.score
     FROM fused
     JOIN chunks c ON c.id = fused.id
     ORDER BY fused.score DESC
@@ -143,7 +153,16 @@ export async function hybridSearch(
         vendor: r.vendor,
         content: r.content,
         score: Number(r.score),
-        citation: { sopId: r.sop_id, sectionPath: r.section_path },
+        poid: r.poid,
+        jobId: r.job_id,
+        page: r.page,
+        citation: {
+          sopId: r.sop_id,
+          sectionPath: r.section_path,
+          poid: r.poid,
+          jobId: r.job_id,
+          page: r.page,
+        },
       })
     );
   });

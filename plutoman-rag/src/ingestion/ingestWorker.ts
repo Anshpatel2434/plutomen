@@ -3,7 +3,9 @@
  * Postgres retrieval index. Runs as its own process (`npm run worker`).
  *
  * Pipeline for an upsert:
- *   parse xlsx -> chunk -> embed (batched) -> within a single withTenant tx:
+ *   parse xlsx [+ optional PDF twin -> POID, Job ID, printed page per chunk;
+ *   rejected if it is not the same report] -> chunk -> embed (batched) ->
+ *   within a single withTenant tx:
  *     upsert the `documents` row (on conflict tenant_id, mongo_id)
  *     delete existing chunks for this sop_id (idempotent replace)
  *     batch-insert new chunks (content + generated tsv + embedding)
@@ -20,6 +22,7 @@ import { invalidateTenant } from "../cache";
 import { embed, EMBED_MODEL, EMBED_VERSION, toVectorLiteral } from "../embeddings";
 import { parseWorkbookBuffer } from "./parseXlsx";
 import { chunkReport } from "./chunk";
+import { parsePdfBuffer, locateChunks, ParsedPdf, TWIN_MATCH_THRESHOLD } from "./parsePdf";
 import {
   INGEST_QUEUE_NAME,
   IngestJobData,
@@ -37,6 +40,17 @@ async function loadBuffer(data: IngestJobData): Promise<Buffer> {
   throw new Error("upsert job requires fileRef or parsedPayload.xlsxBase64");
 }
 
+/** Parse the optional PDF twin (path or inline base64); null when none given. */
+async function loadPdf(data: IngestJobData): Promise<ParsedPdf | null> {
+  if (data.parsedPayload?.pdfBase64) {
+    return parsePdfBuffer(Buffer.from(data.parsedPayload.pdfBase64, "base64"));
+  }
+  if (data.pdfRef) {
+    return parsePdfBuffer(await readFile(data.pdfRef));
+  }
+  return null;
+}
+
 /**
  * Core upsert routine — exported so the demo script can run ingestion inline
  * without a running worker. All tenant data access goes through withTenant so
@@ -45,7 +59,26 @@ async function loadBuffer(data: IngestJobData): Promise<Buffer> {
 export async function ingestUpsert(data: IngestJobData): Promise<{ chunks: number }> {
   const buffer = await loadBuffer(data);
   const report = await parseWorkbookBuffer(buffer);
-  const { metadata, chunks } = chunkReport(report);
+
+  // Optional PDF twin -> POID, Job ID and the printed page of every chunk.
+  const pdf = await loadPdf(data);
+  const ids = pdf ? { poid: pdf.poid, jobId: pdf.jobId } : {};
+  const { metadata, chunks } = chunkReport(report, ids);
+
+  let pages: (string | null)[] = chunks.map(() => null);
+  if (pdf) {
+    const loc = locateChunks(pdf, chunks);
+    // Refuse a mismatched pair: attaching the wrong POID would make every
+    // citation point at the wrong document (a scored fail), which is worse
+    // than having no POID at all. Fail loudly so the job is visible/retryable.
+    if (loc.total > 0 && loc.matched / loc.total < TWIN_MATCH_THRESHOLD) {
+      throw new Error(
+        `PDF ${pdf.poid ?? "(no POID)"} is not the twin of workbook ${data.mongoId}: ` +
+          `only ${loc.matched}/${loc.total} items match (need ${TWIN_MATCH_THRESHOLD * 100}%)`
+      );
+    }
+    pages = loc.pages;
+  }
 
   // Embed all chunk contents in one batched call (documents task prefix).
   const vectors = await embed(
@@ -56,16 +89,28 @@ export async function ingestUpsert(data: IngestJobData): Promise<{ chunks: numbe
   return withTenant(data.tenantId, async (client) => {
     // 1) Upsert the parent document row.
     const docRes = await client.query<{ id: string }>(
-      `INSERT INTO documents (tenant_id, mongo_id, type, title, status, section_path, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, now())
+      `INSERT INTO documents (tenant_id, mongo_id, type, title, status, section_path,
+                              poid, job_id, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
        ON CONFLICT (tenant_id, mongo_id)
        DO UPDATE SET type = EXCLUDED.type,
                      title = EXCLUDED.title,
                      status = EXCLUDED.status,
                      section_path = EXCLUDED.section_path,
+                     poid = EXCLUDED.poid,
+                     job_id = EXCLUDED.job_id,
                      updated_at = now()
        RETURNING id`,
-      [data.tenantId, data.mongoId, metadata.type, metadata.title, metadata.status, null]
+      [
+        data.tenantId,
+        data.mongoId,
+        metadata.type,
+        metadata.title,
+        metadata.status,
+        null,
+        ids.poid ?? null,
+        ids.jobId ?? null,
+      ]
     );
     const documentId = docRes.rows[0].id;
 
@@ -79,7 +124,7 @@ export async function ingestUpsert(data: IngestJobData): Promise<{ chunks: numbe
     //    parameterized placeholders (no string interpolation of values). The
     //    embedding is passed as a pgvector literal string and cast with ::vector.
     if (chunks.length > 0) {
-      const cols = 16; // number of bound params per row
+      const cols = 19; // number of bound params per row
       const values: unknown[] = [];
       const rowsSql: string[] = [];
 
@@ -90,7 +135,7 @@ export async function ingestUpsert(data: IngestJobData): Promise<{ chunks: numbe
           `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, ` +
             `$${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, ` +
             `$${base + 11}, $${base + 12}, $${base + 13}::vector, $${base + 14}, ` +
-            `$${base + 15}, $${base + 16})`
+            `$${base + 15}, $${base + 16}, $${base + 17}, $${base + 18}, $${base + 19})`
         );
         values.push(
           data.tenantId, // tenant_id
@@ -108,7 +153,10 @@ export async function ingestUpsert(data: IngestJobData): Promise<{ chunks: numbe
           toVectorLiteral(vectors[i]), // embedding ::vector
           "text", // modality (TODO: multimodal)
           EMBED_MODEL, // embed_model
-          EMBED_VERSION // embed_version
+          EMBED_VERSION, // embed_version
+          ids.poid ?? null, // poid    (from the PDF twin, if any)
+          ids.jobId ?? null, // job_id  (from the PDF twin, if any)
+          pages[i] // page    printed page label, e.g. "2", "6-7", "cover"
         );
       });
 
@@ -116,7 +164,7 @@ export async function ingestUpsert(data: IngestJobData): Promise<{ chunks: numbe
         `INSERT INTO chunks
            (tenant_id, sop_id, document_id, section_path, question, answer, verdict,
             site, vendor, po, report_date, content, embedding, modality,
-            embed_model, embed_version)
+            embed_model, embed_version, poid, job_id, page)
          VALUES ${rowsSql.join(", ")}`,
         values
       );

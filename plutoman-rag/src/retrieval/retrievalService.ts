@@ -39,6 +39,10 @@ const IngestBody = z.object({
   fileRef: z.string().min(1).optional(),
   // Inline the workbook as base64 when the adapter does not share a filesystem.
   xlsxBase64: z.string().min(1).optional(),
+  // Optional PDF twin of the same report (path or base64). Supplies POID,
+  // Job ID and printed pages for citations; rejected if it is a different report.
+  pdfRef: z.string().min(1).optional(),
+  pdfBase64: z.string().min(1).optional(),
 });
 
 const SearchBody = z.object({
@@ -129,7 +133,7 @@ router.post("/ingest", requireAuth, rateLimit, async (req: Request, res: Respons
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
   }
-  const { mongoId, action, fileRef, xlsxBase64 } = parsed.data;
+  const { mongoId, action, fileRef, xlsxBase64, pdfRef, pdfBase64 } = parsed.data;
   const tenantId = req.auth!.tenantId; // from verified JWT
 
   if (action === "upsert" && !fileRef && !xlsxBase64) {
@@ -142,7 +146,9 @@ router.post("/ingest", requireAuth, rateLimit, async (req: Request, res: Respons
     mongoId,
     action,
     fileRef,
-    parsedPayload: xlsxBase64 ? { xlsxBase64 } : undefined,
+    pdfRef,
+    parsedPayload:
+      xlsxBase64 || pdfBase64 ? { xlsxBase64, pdfBase64 } : undefined,
   });
 
   res.status(202).json({ enqueued: true, jobId });

@@ -2,7 +2,9 @@
  * Grounded generation over retrieved chunks using self-hosted Ollama.
  *
  * We build a strict prompt: the model must answer ONLY from the supplied context
- * and cite sources as [sop_id | section_path]. If the context is insufficient it
+ * and cite sources as [document page | section], e.g.
+ * [POID-4547081947.pdf p.2 | Basic Details > Vendor Name] (falls back to the
+ * source id when the report was ingested without its PDF twin). If the context is insufficient it
  * is told to say so, which limits hallucination for an inspection-QA use case.
  */
 import axios from "axios";
@@ -12,6 +14,21 @@ import { RetrievalHit } from "./hybrid";
 export interface Citation {
   sopId: string;
   sectionPath: string | null;
+  /** From the report's PDF twin; absent/null when ingested without one. */
+  poid?: string | null;
+  jobId?: string | null;
+  /** Printed page label: "2", "6-7", "cover". */
+  page?: string | null;
+}
+
+/**
+ * Human/eval-facing source label. The golden set cites reports as
+ * "POID-4547081947.pdf p.2", so use that form when the PDF twin is known and
+ * fall back to the source id otherwise.
+ */
+export function sourceLabel(c: Citation): string {
+  if (!c.poid) return c.sopId;
+  return c.page ? `${c.poid}.pdf p.${c.page}` : `${c.poid}.pdf`;
 }
 
 export interface GenerationResult {
@@ -37,7 +54,7 @@ export interface HistoryTurn {
 function buildContext(hits: RetrievalHit[]): string {
   return hits
     .map((h, i) => {
-      const cite = `[${h.citation.sopId} | ${h.citation.sectionPath ?? "n/a"}]`;
+      const cite = `[${sourceLabel(h.citation)} | ${h.citation.sectionPath ?? "n/a"}]`;
       return `(${i + 1}) ${cite}\n${h.content}`;
     })
     .join("\n\n");
@@ -98,7 +115,7 @@ export async function generateAnswer(
   const prompt = [
     "You are an assistant answering questions about equipment inspection reports.",
     "Answer the QUESTION using ONLY the CONTEXT below. Do not use outside knowledge.",
-    "Cite the sources you rely on inline using their [sop_id | section_path] tags.",
+    "Cite the sources you rely on inline by copying their [document page | section] tags exactly.",
     "If the context does not contain the answer, say you don't have enough information.",
     "The CONVERSATION HISTORY, if any, is only to resolve pronouns and keep the",
     "topic consistent — do NOT treat it as factual evidence for your answer.",

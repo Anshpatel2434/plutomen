@@ -133,15 +133,31 @@ function parseReportDate(report: ParsedReport): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
-/** Build the "[vendor | site]" tag prefix for a content sentence. */
-function tag(meta: ReportMetadata): string {
-  const parts = [meta.vendor, meta.site].filter(Boolean);
+/**
+ * Document identifiers from the report's PDF twin (see parsePdf.ts). Optional:
+ * an XLSX ingested without its PDF simply has no POID / Job ID.
+ */
+export interface ReportIds {
+  poid?: string | null;
+  jobId?: string | null;
+}
+
+/**
+ * Build the "[POID | Job | vendor | site]" tag prefix for a content sentence.
+ * Putting the POID and Job ID in the text (not only in columns) makes them hit
+ * both keyword search and embeddings — users ask "who is the vendor for job
+ * PH2026100008?" or type "ph2026100001" (golden set Q01, Q25).
+ */
+function tag(meta: ReportMetadata, ids: ReportIds = {}): string {
+  const parts = [ids.poid, ids.jobId ? `Job ${ids.jobId}` : null, meta.vendor, meta.site].filter(
+    Boolean
+  );
   return parts.length ? `[${parts.join(" | ")}] ` : "";
 }
 
 // --- main -------------------------------------------------------------------
 
-export function chunkReport(report: ParsedReport): ChunkedReport {
+export function chunkReport(report: ParsedReport, ids: ReportIds = {}): ChunkedReport {
   const cd = report.checklistDetails;
   const metadata: ReportMetadata = {
     site: cd["Site"] || null,
@@ -154,7 +170,7 @@ export function chunkReport(report: ParsedReport): ChunkedReport {
   };
 
   const chunks: Chunk[] = [];
-  const prefix = tag(metadata);
+  const prefix = tag(metadata, ids);
 
   // 0a) Report details ("Checklist Details" sheet) — who started/completed the
   //     inspection and when, site, category, status. Previously parsed only

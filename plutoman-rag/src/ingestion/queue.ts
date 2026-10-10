@@ -23,8 +23,14 @@ export interface IngestJobData {
   action: "upsert" | "delete";
   /** For upsert: absolute path to an .xlsx file to parse. */
   fileRef?: string;
-  /** For upsert: an already-parsed payload (base64 xlsx buffer), if inlined. */
-  parsedPayload?: { xlsxBase64: string };
+  /**
+   * For upsert (optional): absolute path to the report's PDF twin. When given,
+   * chunks gain POID / Job ID / printed page (see parsePdf.ts), and ingestion
+   * FAILS if the PDF is not the same report as the workbook.
+   */
+  pdfRef?: string;
+  /** For upsert: inlined payloads (base64), when the adapter shares no filesystem. */
+  parsedPayload?: { xlsxBase64?: string; pdfBase64?: string };
 }
 
 /**
