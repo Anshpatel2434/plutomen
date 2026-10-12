@@ -3,6 +3,26 @@
 Branch: `testing/pipeline-docker`. **`main` is not affected by any of this.**
 Current status against the golden set: [GOLDEN_EVAL_STATUS.md](GOLDEN_EVAL_STATUS.md).
 
+## Round 6 (citations, template text, decision conflicts — no database changes)
+
+| Commit | What it changes |
+|---|---|
+| `1310ef9` | decision questions: a decision contradicted by the report's own records is a conflict (decision list + answer check) |
+| `5177aba` | one copy of report-template text (contents page, footer) shared by several reports |
+| `3b6db22` | citations: markers written as "[S1: quoted text, S3]" are rendered |
+| tag `pre-round-6` (`61dfd89`) | the state before this round |
+
+No migration, no re-ingest. Verified on 12 Oct 2026: each commit reverts on
+its own, and the whole round together; each compiles.
+
+```bash
+git revert --no-edit 1310ef9                     # e.g. undo the conflict rule only
+git revert --no-edit pre-round-6..HEAD           # undo the whole round
+npm run build                                    # or: docker compose --profile app up -d --build
+```
+
+---
+
 ## Changes 4 and 9 (complete lists, answer check — no database changes)
 
 | Commit | What it changes |

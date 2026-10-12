@@ -1,0 +1,2 @@
+heldout_set.json sha1 1e1f21d7f8014446d9081ab8aec709a01dfcc0fd
+held-out v2, frozen before any system run, 12 Oct 2026; criteria reviewed, no changes

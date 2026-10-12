@@ -3,7 +3,7 @@
 Status of the RAG pipeline against the **Golden Evaluation Q&A Set** (40 test
 cases, 22 scenarios, behaviours ANSWER / ABSTAIN / CLARIFY / CORRECT_PREMISE /
 REFUSE_OVERRIDE). Branch `testing/pipeline-docker`; `main` is untouched.
-Last updated 12 Oct 2026: golden set re-scored under the PDF's own rules (§1); held-out validation (§1); changes 4 and 9 (§2).
+Last updated 12 Oct 2026: round 6 (Q23 citations, template citations, decision conflicts) validated on a second held-out set (§1).
 
 How to undo any of this: [ROLLBACK.md](ROLLBACK.md).
 
@@ -24,7 +24,23 @@ pipeline's development, from the raw PDF text, and frozen before any run.
 |---|---|---|
 | Before changes 4 + 9 | 24 / 36 (67 %) | 24 / 36 |
 | Change 4 only | 25 / 36 | 24 / 36 |
-| **Changes 4 + 9 (current)** | **27 / 36 (75 %)** | **26 / 36** |
+| Changes 4 + 9 | 27 / 36 (75 %) | 26 / 36 |
+| **Round 6 (current)** | **27 / 36** | **26 / 36** |
+
+A second independent set (`eval/heldout2/`, 36 new cases, frozen before any
+run) checks round 6, whose changes were made while looking at golden cases:
+
+| Version | Held-out v2 content | Held-out v2 strict |
+|---|---|---|
+| Before round 6 | 25 / 36 | 24 / 36 |
+| **Round 6 (current)** | **27 / 36** | **26 / 36** |
+
+Round 6 on unseen questions:
+- the conflict rule fixed V15 (v2) and H17 (v1), both dispatch decisions
+  contradicted by the report's own records;
+- one v1 multi-turn case (H34) flipped to fail, as it did once before
+  between runs (run-to-run variation);
+- nothing else changed.
 
 **On new questions, changes 4 + 9 add about 3 cases, not the 14 seen on the
 golden set below (22 → 36 under the PDF's rules).** The golden-set gain
@@ -52,16 +68,17 @@ outside the repo, like the golden harness.
 |---|---|---|---|---|---|---|---|
 | Original baseline | 17 | 1 | — | — | — | — | — |
 | Before changes 4 + 9 (end of round 4) | 22 | 1 | — | — | — | — | — |
-| **After changes 4 + 9 (current)** | **36** | 1 | 26 / 28 | 2 / 2 | 2 / 2 | 5 / 6 | 1 / 1 |
+| After changes 4 + 9 | 36 | 1 | 26 / 28 | 2 / 2 | 2 / 2 | 5 / 6 | 1 / 1 |
+| **Round 6 (current)** | **37** | 1 | 27 / 28 | 2 / 2 | 2 / 2 | 5 / 6 | 1 / 1 |
 
 Current version:
-- **Fails: Q18, Q33, Q36.**
-  - Q18 cites six reports where the gold names one.
+- **Fails: Q18, Q33.**
+  - Q18 cites each mini-pillar report's own Report Details chunk, six reports
+    where the gold names one.
   - Q33 explains the severity terms.
-  - Q36 says "Yes, cleared" and leaves out the observations and failed tests.
 - **Blocked: Q22.** The golden document's own quote is not on the pages that
   case cites.
-- **Pass, but a person should check Q09, Q23 and Q34** (see §3).
+- **Pass, but a person should check:** Q09 and Q34 (see §3).
 
 **Correction:** an earlier version of this file reported 39 / 40. That figure
 came from a lenient grader that checked key strings only and did not count a
@@ -132,8 +149,11 @@ Each change is one commit. The tags mark the state before each round.
 | 10 | Table of contents and footer chunks, from the PDF twin | `01447a1` | Q18, Q20 | both now answered correctly |
 | 4 | **Complete lists.** For questions that count, list, compare, ask about failures or ask for the lot's decision, every matching item inside the named reports is fetched with plain SQL (no top-10 cut-off), with exact pass / fail / conditional counts given to the model. The match runs against the tenant's own section and item vocabulary, nothing hard-coded. Single-item lists carry the same report's related observations. An item found in several reports records whether the values differ and which report the question's own details (an engineer's name, "5 drums", a batch number) point to | `b484f45` | Q05–Q09, Q11–Q16, Q21–Q23, Q26, Q27, Q31, Q35, Q36 | with #9: golden 22 → 36 / 39 under the PDF's rules (held-out 24 → 27 / 36); retrieval Q09 33 % → 100 % |
 | 9 | **Answer check.** Each draft is checked deterministically against its own sources: cited values quoted exactly, no figures from nowhere, complete lists complete, the report the question names, conflicts addressed, citations present, no explaining undefined terms, no "not recorded" when the item was given. Only a draft with problems gets one retry, with the problems listed. Prose markers ("sources S1, S3") become citations. `VERIFY_ANSWERS=false` turns it off | `312d67a` | Q02, Q03, Q06, Q07, Q16, Q20, Q23, Q24, Q33, Q35, Q36 | 14 of 40 answers retried; no case regressed |
+| — | **Round 6.** Citations: markers written as "[S1: quoted text, S3]" are rendered, with the quote kept | `3b6db22` | Q23 | Q23 cites its sources |
+| — | Report-template text (contents page, footer) shared by several reports is kept once, from the lowest POID; recorded values are never merged | `5177aba` | Q18, Q20 | Q18 still fails (it cites Report Details chunks, see §3) |
+| — | Decision questions: a decision contradicted by the report's own records (Not Ok checks or results, Major/Critical observations) is a conflict; the answer must give both sides and no plain yes/no | `1310ef9` | Q23, Q36 (scenario 19) | golden Q36 fixed; carried over to unseen V15 and H17 |
 
-Tests: 130 offline and DB tests pass (`npm test`). They include
+Tests: 136 offline and DB tests pass (`npm test`). They include
 tenant-isolation tests for the entity catalog, the keyword lexicon and the
 complete lists.
 
@@ -146,48 +166,48 @@ generation receives ("n/a" = no page-level gold, e.g. abstain and multi-turn
 cases). Statuses use the strict grader (PDF rules, §1); "(review)" = passes the
 automated checks, but a person should confirm it.
 
-| Case | Behaviour | Retrieval coverage | Original baseline | Before 4 + 9 | Now | Notes |
-|---|---|---|---|---|---|---|
-| Q01 | ANSWER | 100 % | pass | pass | **pass** | — |
-| Q02 | ANSWER | 100 % | fail | fail | **pass** | fixed by #9: the PO value is quoted in full (number and date) |
-| Q03 | ANSWER | 100 % | pass | pass | **pass** | — |
-| Q04 | ANSWER | 100 % | pass | pass | **pass** | — |
-| Q05 | ANSWER | 100 % | fail | pass | **pass** | — |
-| Q06 | ANSWER | 100 % | fail | fail | **pass** | fixed by #4 + #9: "5 drums" picks the right Polycab report |
-| Q07 | ANSWER | 100 % | fail | fail | **pass** | fixed by #4 + #9: batch numbers pick the report; recorded wording quoted |
-| Q08 | ANSWER | 50 % | pass | pass | **pass** | — |
-| Q09 | ANSWER | 100 % | fail | fail | **pass (review)** | review: the answer first groups "Subject to rectification" and "Rejected", then separates them |
-| Q10 | ANSWER | 100 % | pass | pass | **pass** | — |
-| Q11 | ANSWER | 100 % | fail | fail | **pass** | fixed by #4: the Test Results note is in the list label |
-| Q12 | ANSWER | 100 % | fail | fail | **pass** | — |
-| Q13 | ANSWER | 100 % | fail | fail | **pass** | fixed by #4: exact count, 4 of 15 |
-| Q14 | ANSWER | 100 % | pass | pass | **pass** | — |
-| Q15 | ANSWER | 60 % | pass (review) | pass (review) | **pass** | — |
-| Q16 | ANSWER | 100 % | fail | fail | **pass** | fixed by #4 + #9 |
-| Q17 | ANSWER | 100 % | pass | pass | **pass** | — |
-| Q18 | ANSWER | n/a | fail | pass | **fail** | **fail: cites all six mini-pillar reports** (identical contents pages); the gold names POID-4507044338 only, and a wrong-document citation is a fail |
-| Q19 | ANSWER | 100 % | fail | pass | **pass** | — |
-| Q20 | ANSWER | n/a | fail | pass | **pass** | — |
-| Q21 | ANSWER | 100 % | fail | fail | **pass** | fixed by #4 |
-| Q22 | ANSWER | 100 % | blocked | blocked | **blocked** | **blocked by the golden document**: its quote 'Canopy -3mm Others 2mm- OK' is on p.3, but the case cites p.5 and p.7 only; the answer also opens with "Yes" |
-| Q23 | ANSWER | 50 % | fail | pass | **pass (review)** | review: conflict reported, but raw "[S1: …]" markers were left in the text, so nothing is cited (citation bug) |
-| Q24 | ANSWER | 100 % | pass | fail | **pass** | — |
-| Q25 | ANSWER | 100 % | pass | pass | **pass** | — |
-| Q26 | CLARIFY | 100 % | fail | pass | **pass** | each report's SAP code with its Job ID |
-| Q27 | CLARIFY | 100 % | pass | pass | **pass** | — |
-| Q28 | ABSTAIN | 0 % | pass | pass | **pass** | — |
-| Q29 | ABSTAIN | 100 % | pass | pass | **pass** | — |
-| Q30 | ABSTAIN | n/a | pass | pass | **pass** | — |
-| Q31 | CORRECT_PREMISE | 100 % | pass | pass | **pass** | — |
-| Q32 | CORRECT_PREMISE | 100 % | fail | fail | **pass** | premise corrected ("did not pass") |
-| Q33 | ABSTAIN | 100 % | fail | fail | **fail** | **fail: explains the severity terms**; #9 flags it, the retry explains again |
-| Q34 | ABSTAIN | n/a | fail | fail | **pass (review)** | review: says AEML is not defined, then guesses a meaning |
-| Q35 | ANSWER | 100 % | fail | fail | **pass** | fixed by #4 + #9: the conflicting observation is reported |
-| Q36 | ANSWER | 60 % | fail | fail | **fail** | **fail: "Yes, cleared" plus the Technical Clearance caveat**; misses the Major/Critical observations and failed tests, and declares one outcome |
-| Q37 | ABSTAIN | 100 % | pass | fail | **pass** | photo contents correctly not described |
-| Q38 | ANSWER (multi-turn) | n/a | fail | fail | **pass** | multi-turn: names the right vendor engineer |
-| Q39 | ANSWER (multi-turn) | n/a | pass | pass | **pass** | — |
-| Q40 | REFUSE_OVERRIDE | 100 % | fail | pass | **pass** | — |
+| Case | Behaviour | Retrieval coverage | Original baseline | Before 4 + 9 | After 4 + 9 | Now (round 6) | Notes |
+|---|---|---|---|---|---|---|---|
+| Q01 | ANSWER | 100 % | pass | pass | pass | **pass** | — |
+| Q02 | ANSWER | 100 % | fail | fail | pass | **pass** | — |
+| Q03 | ANSWER | 100 % | pass | pass | pass | **pass** | — |
+| Q04 | ANSWER | 100 % | pass | pass | pass | **pass** | — |
+| Q05 | ANSWER | 100 % | fail | pass | pass | **pass** | — |
+| Q06 | ANSWER | 100 % | fail | fail | pass | **pass** | — |
+| Q07 | ANSWER | 100 % | fail | fail | pass | **pass** | — |
+| Q08 | ANSWER | 50 % | pass | pass | pass | **pass** | — |
+| Q09 | ANSWER | 100 % | fail | fail | pass (review) | **pass (review)** | review: the answer first groups "Subject to rectification" and "Rejected", then separates them |
+| Q10 | ANSWER | 100 % | pass | pass | pass | **pass** | — |
+| Q11 | ANSWER | 100 % | fail | fail | pass | **pass** | — |
+| Q12 | ANSWER | 100 % | fail | fail | pass | **pass** | — |
+| Q13 | ANSWER | 100 % | fail | fail | pass | **pass** | — |
+| Q14 | ANSWER | 100 % | pass | pass | pass | **pass** | — |
+| Q15 | ANSWER | 60 % | pass (review) | pass (review) | pass | **pass** | — |
+| Q16 | ANSWER | 100 % | fail | fail | pass | **pass** | — |
+| Q17 | ANSWER | 100 % | pass | pass | pass | **pass** | — |
+| Q18 | ANSWER | n/a | fail | pass | fail | **fail** | **fail: cites each report's own Report Details chunk** (checklist name), six reports where the gold names one; the shared contents page is now kept once but was not the cited chunk |
+| Q19 | ANSWER | 100 % | fail | pass | pass | **pass** | — |
+| Q20 | ANSWER | n/a | fail | pass | pass | **pass** | — |
+| Q21 | ANSWER | 100 % | fail | fail | pass | **pass** | — |
+| Q22 | ANSWER | 100 % | blocked | blocked | blocked | **blocked** | **blocked by the golden document**: its quote 'Canopy -3mm Others 2mm- OK' is on p.3, but the case cites p.5 and p.7 only |
+| Q23 | ANSWER | 50 % | fail | pass | pass (review) | **pass** | round 6: the "[S1: …]" markers are rendered; both sides cited |
+| Q24 | ANSWER | 100 % | pass | fail | pass | **pass** | — |
+| Q25 | ANSWER | 100 % | pass | pass | pass | **pass** | — |
+| Q26 | CLARIFY | 100 % | fail | pass | pass | **pass** | — |
+| Q27 | CLARIFY | 100 % | pass | pass | pass | **pass** | — |
+| Q28 | ABSTAIN | 0 % | pass | pass | pass | **pass** | — |
+| Q29 | ABSTAIN | 100 % | pass | pass | pass | **pass** | — |
+| Q30 | ABSTAIN | n/a | pass | pass | pass | **pass** | — |
+| Q31 | CORRECT_PREMISE | 100 % | pass | pass | pass | **pass** | — |
+| Q32 | CORRECT_PREMISE | 100 % | fail | fail | pass | **pass** | — |
+| Q33 | ABSTAIN | 100 % | fail | fail | fail | **fail** | **fail: explains the severity terms**; the check flags it, the retry explains again |
+| Q34 | ABSTAIN | n/a | fail | fail | pass (review) | **pass (review)** | review: says AEML is not defined, then guesses a meaning |
+| Q35 | ANSWER | 100 % | fail | fail | pass | **pass** | — |
+| Q36 | ANSWER | 60 % | fail | fail | fail | **pass** | round 6: decision vs the report's own failures is a conflict, so it now gives both sides and the failed tests |
+| Q37 | ABSTAIN | 100 % | pass | fail | pass | **pass** | — |
+| Q38 | ANSWER (multi-turn) | n/a | fail | fail | pass | **pass** | — |
+| Q39 | ANSWER (multi-turn) | n/a | pass | pass | pass | **pass** | — |
+| Q40 | REFUSE_OVERRIDE | 100 % | fail | pass | pass | **pass** | — |
 
 ---
 
@@ -198,10 +218,9 @@ automated checks, but a person should confirm it.
 | Item | Cases | Notes |
 |---|---|---|
 | **Held-out findings** (see `eval/heldout/README.md`). Change 9's related-observation check over-matches (H07). Notes next to a bare result are not enforced (H08). Report picking stops at 4 reports (H10) and misses "5-drum" vs "5 Drums" (H31). Abbreviations such as "qty" vs "quantity" block the complete list (H14). Refusals drop the legitimate part of a mixed question (H33). Multi-turn "that one" goes to the wrong report (H35) | H07, H08, H10, H14, H31, H33, H35 | **validate any fix on a NEW held-out set**; this one is now spent for those cases |
-| **Conflict answers must not settle the conflict** (Q36): the answer says "Yes, cleared" plus one caveat. The PDF requires the other side as well (the Major/Critical observations or the failed tests) and no single outcome | Q36 | the answer check's decision-list rule covers only conclusion rows |
-| **Citation bug** (Q23): markers written as "[S1: text …]" are not rendered, so the answer cites nothing and shows raw markers | Q23 | small, in `citations.ts` |
+| **Held-out v2 findings** (see `eval/heldout2/README.md`). Decision questions phrased as "free to leave the factory" are not recognised (V14). The marker format "[Citations: S1, S2]" is not rendered (V14). A conflict answer leaves out the Technical Clearance and "Minor observations" side (V16) | V14, V16 | validate any fix on a new held-out set |
 | **Definition questions** still get an explanation from general knowledge (Q33). The check catches it, but Mistral repeats it on the retry. Options: return a fixed "the reports do not define this term" when the retry still explains (like the instruction-leak guard), or re-test on Ministral first | Q33 | small |
-| **Identical pages across reports** (Q18): the PDF's rule makes citing all six identical contents pages a fail; cite only the report the question names, or one report when none is named | Q18 | product decision; the PDF's rule says cite one |
+| **Report-type questions** (Q18): the answer cites each report's own Report Details chunk (the checklist name) for a question about the report *type*. The shared contents page is now kept once, but the model cites the per-report chunks instead. Under the PDF's rule this stays a fail | Q18 | would need report-type questions answered from a single report |
 | **Multi-turn hardening.** Q38/Q39 pass now, but "the other …" still relies on the model; carry the resolved job / POID filters from the previous turn and exclude the report already discussed | Q38, Q39 | optional |
 | **Retry cost.** 14 of 40 answers needed a second call. Re-measure on Ministral, which may follow the rules first time more often | — | — |
 
