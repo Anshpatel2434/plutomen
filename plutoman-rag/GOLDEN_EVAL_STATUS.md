@@ -3,7 +3,7 @@
 Status of the RAG pipeline against the **Golden Evaluation Q&A Set** (40 test
 cases, 22 scenarios, behaviours ANSWER / ABSTAIN / CLARIFY / CORRECT_PREMISE /
 REFUSE_OVERRIDE). Branch `testing/pipeline-docker`; `main` is untouched.
-Last updated 12 Oct 2026 (changes 4 and 9, see §2).
+Last updated 12 Oct 2026 (changes 4 and 9, see §2; held-out validation, see §1).
 
 How to undo any of this: [ROLLBACK.md](ROLLBACK.md).
 
@@ -14,6 +14,26 @@ How to undo any of this: [ROLLBACK.md](ROLLBACK.md).
 All runs use the same 11 demo reports, the same local models (Ollama
 `nomic-embed-text` + `mistral` 7B, partly GPU-offloaded on a 4 GB card) and the
 same grader.
+
+### Held-out set: the honest measure
+
+A separate set of 36 cases (`eval/heldout/`) was written independently of the
+pipeline's development, from the raw PDF text, and frozen before any run.
+
+| Version | Held-out content | Held-out strict (no wrong-report citation) |
+|---|---|---|
+| Before changes 4 + 9 | 24 / 36 (67 %) | 24 / 36 |
+| Change 4 only | 25 / 36 | 24 / 36 |
+| **Changes 4 + 9 (current)** | **27 / 36 (75 %)** | **26 / 36** |
+
+**On new questions, changes 4 + 9 add about 3 cases, not the 14 seen on the
+golden set below.** The golden-set 39/40 reflects tuning on those 40
+questions. What generalises:
+- complete lists for counting and listing (H11, H12 went from fail to pass);
+- ABSTAIN and CLARIFY hold in every version.
+
+One case got worse (H07, caused by change 9's related-observation check). The
+remaining failures are listed in [eval/heldout/README.md](eval/heldout/README.md).
 
 ### Answers (full golden set through the real API)
 
@@ -33,11 +53,9 @@ includes a second LLM call for the 14 of 40 answers the check sent back.
 
 **Read this carefully:**
 
-- **These numbers are optimistic.** Changes 4 and 9 were developed while
-  looking at these same 40 questions, and some of the answer checks were added
-  for failures seen in these runs. The checks are generic (none mentions a
-  vendor, report or question), but the score must be confirmed on questions
-  the pipeline was not tuned on (a held-out set) before it is relied on.
+- **These golden-set numbers are optimistic, and the held-out set confirms it.**
+  Changes 4 and 9 were developed while looking at these same 40 questions. On
+  the held-out set the same versions score 67 % → 75 % (above).
 - The content grader is **provisional**. Its key strings were derived by hand
   from each case's written pass criteria, because the client's machine-readable
   `must_include` / `must_not_include` sheet has not been supplied. Manual review
@@ -156,7 +174,7 @@ cases). Content = provisional grader (see §1).
 
 | Item | Cases | Notes |
 |---|---|---|
-| **Validate on a held-out set.** Write 20–40 new questions over the same reports, in the golden set's style, that were not used for tuning, and run the same harness. This is the honest measure of changes 4 + 9 | all | most important next step; the client's `must_include` sheet would make it objective |
+| **Held-out findings** (see `eval/heldout/README.md`). Change 9's related-observation check over-matches (H07). Notes next to a bare result are not enforced (H08). Report picking stops at 4 reports (H10) and misses "5-drum" vs "5 Drums" (H31). Abbreviations such as "qty" vs "quantity" block the complete list (H14). Refusals drop the legitimate part of a mixed question (H33). Multi-turn "that one" goes to the wrong report (H35) | H07, H08, H10, H14, H31, H33, H35 | **validate any fix on a NEW held-out set**; this one is now spent for those cases |
 | **Definition questions** still get an explanation from general knowledge (Q33). The check catches it, but Mistral repeats it on the retry. Options: return a fixed "the reports do not define this term" when the retry still explains (like the instruction-leak guard), or re-test on Ministral first | Q33 | small |
 | **Identical pages across reports** (Q18): decide whether citing every report with the same contents page is right, or whether to cite one | Q18 | needs a product decision |
 | **Multi-turn hardening.** Q38/Q39 pass now, but "the other …" still relies on the model; carry the resolved job / POID filters from the previous turn and exclude the report already discussed | Q38, Q39 | optional |

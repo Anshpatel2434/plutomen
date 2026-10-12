@@ -1,0 +1,1219 @@
+[
+ {
+  "id": "H01",
+  "answer": "The SAP code on the Larsen & Toubro mini pillar inspection report is 10460112 [POID-4507044338.pdf p.2].",
+  "citations": [
+   {
+    "sopId": "POID-4507044338",
+    "sectionPath": "Basic Details > SAP Code",
+    "poid": "POID-4507044338",
+    "jobId": "PH2026100006",
+    "page": "2"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "Larsen & Toubro Ltd. (Electrical & Automation)"
+   ],
+   "reportTypes": [
+    "LT_Mini_Pillar"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"SAP Code\" in 1 report",
+    "counts": {
+     "total": 1,
+     "passed": 0,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 1
+    },
+    "listed": 1
+   }
+  ],
+  "verification": null,
+  "secs": 6.8
+ },
+ {
+  "id": "H02",
+  "answer": "The offered item serial numbers under POID-4523310336 range from LTMP/2026/0501 to LTMP/2026/0525 [POID-4523310336.pdf p.2-3].",
+  "citations": [
+   {
+    "sopId": "POID-4523310336",
+    "sectionPath": "Basic Details > Sl Nos of Items",
+    "poid": "POID-4523310336",
+    "jobId": "PH2026100003",
+    "page": "2-3"
+   }
+  ],
+  "applied": {
+   "poids": [
+    "POID-4523310336"
+   ]
+  },
+  "aggregation": [],
+  "verification": null,
+  "secs": 16.1
+ },
+ {
+  "id": "H03",
+  "answer": "The Finolex lot under job PH2026100005 was offered with the following batch numbers: PC/LT/2607/A01 to PC/LT/2607/A05 [POID-4527422406.pdf p.2].",
+  "citations": [
+   {
+    "sopId": "POID-4527422406",
+    "sectionPath": "Basic Details > Batch Nos",
+    "poid": "POID-4527422406",
+    "jobId": "PH2026100005",
+    "page": "2"
+   }
+  ],
+  "applied": {
+   "jobIds": [
+    "PH2026100005"
+   ]
+  },
+  "aggregation": [],
+  "verification": null,
+  "secs": 5.7
+ },
+ {
+  "id": "H04",
+  "answer": "The canopy sheet thickness actually measured on the ABB mini pillars for job PH2026100009 was 2.6 mm [POID-4593151822.pdf p.3].",
+  "citations": [
+   {
+    "sopId": "POID-4593151822",
+    "sectionPath": "Characteristics > Visual & Physical Checks > Sheet Steel Thickness & Type",
+    "poid": "POID-4593151822",
+    "jobId": "PH2026100009",
+    "page": "3"
+   }
+  ],
+  "applied": {
+   "jobIds": [
+    "PH2026100009"
+   ]
+  },
+  "aggregation": [],
+  "verification": null,
+  "secs": 4.5
+ },
+ {
+  "id": "H05",
+  "answer": "The KEI cable has an armour strand size of 2.5 mm GI round wire [POID-4547081947.pdf p.3]. The number of armour strands is 56 Nos [POID-4547081947.pdf p.3].",
+  "citations": [
+   {
+    "sopId": "POID-4547081947",
+    "sectionPath": "Characteristics > Physical Checks > Armour Strand Size",
+    "poid": "POID-4547081947",
+    "jobId": "PH2026100008",
+    "page": "3"
+   },
+   {
+    "sopId": "POID-4547081947",
+    "sectionPath": "Characteristics > Physical Checks > No of Armour Strands",
+    "poid": "POID-4547081947",
+    "jobId": "PH2026100008",
+    "page": "3"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "KEI Industries Ltd."
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"No of Armour Strands\" in 1 report",
+    "counts": {
+     "total": 1,
+     "passed": 0,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 1
+    },
+    "listed": 1
+   }
+  ],
+  "verification": null,
+  "secs": 5.0
+ },
+ {
+  "id": "H06",
+  "answer": "The Siemens pilar (Mini Pillar) report does not indicate whether the Danger Boards are Ok or Not Ok. The report [POID-4589377670.pdf p.4] states that the Danger Board is missing on Sl. LTMP/2026/0470. However, the report does not provide information about the status of the Danger Boards for the rest of the pilar.",
+  "citations": [
+   {
+    "sopId": "POID-4589377670",
+    "sectionPath": "Characteristics > Visual & Physical Checks > Danger Boards",
+    "poid": "POID-4589377670",
+    "jobId": "PH2026100002",
+    "page": "4"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "Siemens Ltd. – Smart Infrastructure"
+   ]
+  },
+  "aggregation": [],
+  "verification": null,
+  "secs": 9.0
+ },
+ {
+  "id": "H07",
+  "answer": "The powder coating thickness observed at the corners in the Kirloskar mini pillar report was 60–70 microns [POID-4566765203.pdf p.6].",
+  "citations": [
+   {
+    "sopId": "POID-4566765203",
+    "sectionPath": "Inspection Observations > 1.",
+    "poid": "POID-4566765203",
+    "jobId": "PH2026100007",
+    "page": "6"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "Kirloskar Electric Company Ltd."
+   ],
+   "reportTypes": [
+    "LT_Mini_Pillar"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"Powder coating thickness measurement\" in 1 report",
+    "counts": {
+     "total": 1,
+     "passed": 1,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 3
+   }
+  ],
+  "verification": null,
+  "secs": 4.9
+ },
+ {
+  "id": "H08",
+  "answer": "The inspector found that the Bill of Material did not pass for the ABB India mini pillar job where Amit Verma was the vendor engineer. [POID-4593151822.pdf p.4]",
+  "citations": [
+   {
+    "sopId": "POID-4593151822",
+    "sectionPath": "Characteristics > BOM Verification > Bill of Material",
+    "poid": "POID-4593151822",
+    "jobId": "PH2026100009",
+    "page": "4"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "ABB India Limited"
+   ],
+   "reportTypes": [
+    "LT_Mini_Pillar"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"Vendor Engineer & Designation\" in 3 reports",
+    "counts": {
+     "total": 3,
+     "passed": 0,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 3
+    },
+    "listed": 3
+   },
+   {
+    "heading": "\"Bill of Material\" in 3 reports",
+    "counts": {
+     "total": 3,
+     "passed": 1,
+     "failed": 2,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 3
+   }
+  ],
+  "verification": null,
+  "secs": 6.6
+ },
+ {
+  "id": "H09",
+  "answer": "The inspection report covering batch numbers HV/LT/CAB/260715/01 to HV/LT/CAB/260715/06 is POID-4552466107, Job PH2026100011, from Polycab India Ltd. The filler diameter recorded in this report is 4.5 mm [POID-4552466107.pdf p.4].",
+  "citations": [
+   {
+    "sopId": "POID-4552466107",
+    "sectionPath": "Characteristics > Physical Checks > Filler Diameter",
+    "poid": "POID-4552466107",
+    "jobId": "PH2026100011",
+    "page": "4"
+   }
+  ],
+  "applied": {},
+  "aggregation": [],
+  "verification": null,
+  "secs": 10.1
+ },
+ {
+  "id": "H10",
+  "answer": "The mini pillar lot does not have a specific number of items mentioned in the reports. However, for the 6 mini pillars inspected, 2 did not pass the earthing check. [POID-4589377670.pdf p.3; POID-4593151822.pdf p.3]",
+  "citations": [
+   {
+    "sopId": "POID-4589377670",
+    "sectionPath": "Characteristics > Visual & Physical Checks > Earthing",
+    "poid": "POID-4589377670",
+    "jobId": "PH2026100002",
+    "page": "3"
+   },
+   {
+    "sopId": "POID-4593151822",
+    "sectionPath": "Characteristics > Visual & Physical Checks > Earthing",
+    "poid": "POID-4593151822",
+    "jobId": "PH2026100009",
+    "page": "3"
+   }
+  ],
+  "applied": {
+   "reportTypes": [
+    "LT_Mini_Pillar"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"Earthing\" in 6 reports",
+    "counts": {
+     "total": 6,
+     "passed": 4,
+     "failed": 2,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 6
+   }
+  ],
+  "verification": null,
+  "secs": 8.8
+ },
+ {
+  "id": "H11",
+  "answer": "There were 3 acceptance tests that came out as a fail in POID-4532592980. The tests that failed are:\n\n1. Conductor Resistance Tests: 0.118 Ω/km @ 20°C – above max; conductor resistance fail [POID-4532592980.pdf p.4]\n2. Armour Tests - Mass of Zinc Coating & Uniformity of Zinc coating: Zn mass 180 g/m² – below min; armour coating fail [POID-4532592980.pdf p.5]\n3. Hot Set Test on Insulation: Permanent set 18% – out of limit; hot set fail - Insulation compound / cure issue suspected. [POID-4532592980.pdf p.5]",
+  "citations": [
+   {
+    "sopId": "POID-4532592980",
+    "sectionPath": "Characteristics > Acceptance Tests > Conductor Resistance Tests",
+    "poid": "POID-4532592980",
+    "jobId": "PH2026100004",
+    "page": "4"
+   },
+   {
+    "sopId": "POID-4532592980",
+    "sectionPath": "Characteristics > Acceptance Tests > Armour Tests - Mass of Zinc Coating & Uniformity of Zinc coating",
+    "poid": "POID-4532592980",
+    "jobId": "PH2026100004",
+    "page": "5"
+   },
+   {
+    "sopId": "POID-4532592980",
+    "sectionPath": "Characteristics > Acceptance Tests > Hot Set Test on Insulation",
+    "poid": "POID-4532592980",
+    "jobId": "PH2026100004",
+    "page": "5"
+   }
+  ],
+  "applied": {
+   "poids": [
+    "POID-4532592980"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "Acceptance Tests in Report POID-4532592980 (Job PH2026100004, Finolex Cables Ltd.)",
+    "counts": {
+     "total": 15,
+     "passed": 12,
+     "failed": 3,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 3
+   }
+  ],
+  "verification": null,
+  "secs": 19.2
+ },
+ {
+  "id": "H12",
+  "answer": "The Siemens mini pillars in Report POID-4589377670 have 5 visual/physical checks that did not come out Ok:\n1. Earthing: Not Ok [POID-4589377670.pdf p.3]\n2. Electrical Clearances: Not Ok - Phase–phase and phase–earth clearances as per IS / GA. [POID-4589377670.pdf p.3]\n3. Sheet Steel Thickness & Type: Not OK [POID-4589377670.pdf p.3]\n4. Door Hinges /Interlock for door removal from hinge: Not Ok [POID-4589377670.pdf p.4]\n5. Locking Arrangement: Not Ok [POID-4589377670.pdf p.4]\n\nThe total number of visual/physical checks that did not come out Ok is 5.",
+  "citations": [
+   {
+    "sopId": "POID-4589377670",
+    "sectionPath": "Characteristics > Visual & Physical Checks > Earthing",
+    "poid": "POID-4589377670",
+    "jobId": "PH2026100002",
+    "page": "3"
+   },
+   {
+    "sopId": "POID-4589377670",
+    "sectionPath": "Characteristics > Visual & Physical Checks > Electrical Clearances",
+    "poid": "POID-4589377670",
+    "jobId": "PH2026100002",
+    "page": "3"
+   },
+   {
+    "sopId": "POID-4589377670",
+    "sectionPath": "Characteristics > Visual & Physical Checks > Sheet Steel Thickness & Type",
+    "poid": "POID-4589377670",
+    "jobId": "PH2026100002",
+    "page": "3"
+   },
+   {
+    "sopId": "POID-4589377670",
+    "sectionPath": "Characteristics > Visual & Physical Checks > Door Hinges /Interlock for door removal from hinge",
+    "poid": "POID-4589377670",
+    "jobId": "PH2026100002",
+    "page": "4"
+   },
+   {
+    "sopId": "POID-4589377670",
+    "sectionPath": "Characteristics > Visual & Physical Checks > Locking Arrangement",
+    "poid": "POID-4589377670",
+    "jobId": "PH2026100002",
+    "page": "4"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "Siemens Ltd. – Smart Infrastructure"
+   ],
+   "reportTypes": [
+    "LT_Mini_Pillar"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "Visual & Physical Checks in Report POID-4589377670 (Job PH2026100002, Siemens Ltd. – Smart Infrastructure)",
+    "counts": {
+     "total": 11,
+     "passed": 6,
+     "failed": 5,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 11
+   }
+  ],
+  "verification": null,
+  "secs": 20.4
+ },
+ {
+  "id": "H13",
+  "answer": "The reports in POID-4562922674 mark the following photo uploads as Not Attached:\n1. All 4 sides view with door closed condition [POID-4562922674.pdf p.5]\n2. Foundation Structure View [POID-4562922674.pdf p.5]",
+  "citations": [
+   {
+    "sopId": "POID-4562922674",
+    "sectionPath": "Characteristics > Photos Upload > All 4 sides view with door closed condition",
+    "poid": "POID-4562922674",
+    "jobId": "PH2026100001",
+    "page": "5"
+   },
+   {
+    "sopId": "POID-4562922674",
+    "sectionPath": "Characteristics > Photos Upload > Foundation Structure View",
+    "poid": "POID-4562922674",
+    "jobId": "PH2026100001",
+    "page": "5"
+   }
+  ],
+  "applied": {
+   "poids": [
+    "POID-4562922674"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "Photos Upload in Report POID-4562922674 (Job PH2026100001, ABB India Limited)",
+    "counts": {
+     "total": 3,
+     "passed": 0,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 3
+    },
+    "listed": 3
+   }
+  ],
+  "verification": null,
+  "secs": 6.6
+ },
+ {
+  "id": "H14",
+  "answer": "The offered quantity is not explicitly stated in the provided sources. However, since all three reports are for the same checklist name, category, subcategory, site, and created by the same person, it is reasonable to assume that the offered quantity is the same across all three inspections. Without explicit information about the offered quantity, it cannot be confirmed or denied that it is the same.",
+  "citations": [],
+  "applied": {
+   "vendors": [
+    "ABB India Limited"
+   ],
+   "reportTypes": [
+    "LT_Mini_Pillar"
+   ]
+  },
+  "aggregation": [],
+  "verification": null,
+  "secs": 10.1
+ },
+ {
+  "id": "H15",
+  "answer": "The reports that had the Al Bus Bar conductivity measurement marked Not Ok are:\n- Report POID-4523310336 (Job PH2026100003, ABB India Limited) [POID-4523310336.pdf p.5]\n- Report POID-4593151822 (Job PH2026100009, ABB India Limited) [POID-4593151822.pdf p.5]",
+  "citations": [
+   {
+    "sopId": "POID-4523310336",
+    "sectionPath": "Characteristics > Acceptance Tests as per QAP/IS > Al Bus Bar conductivity measurement",
+    "poid": "POID-4523310336",
+    "jobId": "PH2026100003",
+    "page": "5"
+   },
+   {
+    "sopId": "POID-4593151822",
+    "sectionPath": "Characteristics > Acceptance Tests as per QAP/IS > Al Bus Bar conductivity measurement",
+    "poid": "POID-4593151822",
+    "jobId": "PH2026100009",
+    "page": "5"
+   }
+  ],
+  "applied": {
+   "reportTypes": [
+    "LT_Mini_Pillar"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"Al Bus Bar conductivity measurement\" in 6 reports",
+    "counts": {
+     "total": 6,
+     "passed": 4,
+     "failed": 2,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 2
+   }
+  ],
+  "verification": null,
+  "secs": 11.3
+ },
+ {
+  "id": "H16",
+  "answer": "The reports POID-4527422406 and POID-4552466107 found damage on the cable in the Cable Appearances / Damages check during rewinding. [POID-4527422406.pdf p.6; POID-4552466107.pdf p.6]",
+  "citations": [
+   {
+    "sopId": "POID-4527422406",
+    "sectionPath": "Characteristics > Cable Rewinding on Drum > Cable Appearances / Damages check",
+    "poid": "POID-4527422406",
+    "jobId": "PH2026100005",
+    "page": "6"
+   },
+   {
+    "sopId": "POID-4552466107",
+    "sectionPath": "Characteristics > Cable Rewinding on Drum > Cable Appearances / Damages check",
+    "poid": "POID-4552466107",
+    "jobId": "PH2026100011",
+    "page": "6"
+   }
+  ],
+  "applied": {
+   "reportTypes": [
+    "LT_Power_Cables"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"Cable Appearances / Damages check\" in 5 reports",
+    "counts": {
+     "total": 5,
+     "passed": 3,
+     "failed": 0,
+     "conditional": 2,
+     "noResult": 0
+    },
+    "listed": 5
+   }
+  ],
+  "verification": null,
+  "secs": 8.0
+ },
+ {
+  "id": "H17",
+  "answer": "Yes, the Finolex lot under job PH2026100005 was cleared to go to site, according to the Inspection Conclusion / Declaration [POID-4527422406.pdf p.10].",
+  "citations": [
+   {
+    "sopId": "POID-4527422406",
+    "sectionPath": "Inspection Conclusion > Declaration",
+    "poid": "POID-4527422406",
+    "jobId": "PH2026100005",
+    "page": "10"
+   }
+  ],
+  "applied": {
+   "jobIds": [
+    "PH2026100005"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "Inspection Conclusion (the lot's decision) in Report POID-4527422406 (Job PH2026100005, Finolex Cables Ltd.)",
+    "counts": {
+     "total": 3,
+     "passed": 2,
+     "failed": 1,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 3
+   }
+  ],
+  "verification": null,
+  "secs": 5.5
+ },
+ {
+  "id": "H18",
+  "answer": "Yes, the Kirloskar mini pillar lot can be dispatched, as stated in the Declaration [POID-4566765203.pdf p.7]. However, it is subject to rectification of minor defects, as stated in the Technical Clearance [POID-4566765203.pdf p.7].",
+  "citations": [
+   {
+    "sopId": "POID-4566765203",
+    "sectionPath": "Inspection Conclusion > Declaration",
+    "poid": "POID-4566765203",
+    "jobId": "PH2026100007",
+    "page": "7"
+   },
+   {
+    "sopId": "POID-4566765203",
+    "sectionPath": "Inspection Conclusion > Technical Clearance",
+    "poid": "POID-4566765203",
+    "jobId": "PH2026100007",
+    "page": "7"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "Kirloskar Electric Company Ltd."
+   ],
+   "reportTypes": [
+    "LT_Mini_Pillar"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "Inspection Conclusion (the lot's decision) in Report POID-4566765203 (Job PH2026100007, Kirloskar Electric Company Ltd.)",
+    "counts": {
+     "total": 3,
+     "passed": 2,
+     "failed": 0,
+     "conditional": 1,
+     "noResult": 0
+    },
+    "listed": 3
+   }
+  ],
+  "verification": null,
+  "secs": 6.6
+ },
+ {
+  "id": "H19",
+  "answer": "The insulation resistance test result for the ABB mini pillars in job PH2026100001 was \"Ok - Test aborted — surface moisture; dry & retest required.\" [POID-4562922674.pdf p.5]",
+  "citations": [
+   {
+    "sopId": "POID-4562922674",
+    "sectionPath": "Characteristics > Acceptance Tests as per QAP/IS > Insulation resistance test phase to phase & phase to earth",
+    "poid": "POID-4562922674",
+    "jobId": "PH2026100001",
+    "page": "5"
+   }
+  ],
+  "applied": {
+   "jobIds": [
+    "PH2026100001"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"Insulation resistance test phase to phase & phase to earth\" in 1 report",
+    "counts": {
+     "total": 1,
+     "passed": 1,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 1
+   }
+  ],
+  "verification": null,
+  "secs": 5.8
+ },
+ {
+  "id": "H20",
+  "answer": "The reports do not indicate whether the conductor in POID-4504515691 was compacted. [POID-4504515691.pdf p.4] states the conductor's shape as non-compacted circular, while [POID-4504515691.pdf p.4] describes it as compact circular. The report does not resolve this conflict.",
+  "citations": [
+   {
+    "sopId": "POID-4504515691",
+    "sectionPath": "Characteristics > Physical Checks > shape of conductor",
+    "poid": "POID-4504515691",
+    "jobId": "PH2026100010",
+    "page": "4"
+   },
+   {
+    "sopId": "POID-4504515691",
+    "sectionPath": "Characteristics > Physical Checks > No of Strands in conductor",
+    "poid": "POID-4504515691",
+    "jobId": "PH2026100010",
+    "page": "4"
+   }
+  ],
+  "applied": {
+   "poids": [
+    "POID-4504515691"
+   ]
+  },
+  "aggregation": [],
+  "verification": null,
+  "secs": 7.3
+ },
+ {
+  "id": "H21",
+  "answer": "The Finolex cable with Job ID PH2026100005 had a drum length of 1000 mtr verified [POID-4527422406.pdf p.7]. The Finolex cable with Job ID PH2026100004 had a drum length of 250 mtr verified [POID-4532592980.pdf p.7].",
+  "citations": [
+   {
+    "sopId": "POID-4527422406",
+    "sectionPath": "Characteristics > Cable Rewinding on Drum > Drum Length Verification",
+    "poid": "POID-4527422406",
+    "jobId": "PH2026100005",
+    "page": "7"
+   },
+   {
+    "sopId": "POID-4532592980",
+    "sectionPath": "Characteristics > Cable Rewinding on Drum > Drum Length Verification",
+    "poid": "POID-4532592980",
+    "jobId": "PH2026100004",
+    "page": "7"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "Finolex Cables Ltd."
+   ],
+   "reportTypes": [
+    "LT_Power_Cables"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"Drum Length Verification\" in 2 reports",
+    "counts": {
+     "total": 2,
+     "passed": 2,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 2
+   }
+  ],
+  "verification": null,
+  "secs": 7.9
+ },
+ {
+  "id": "H22",
+  "answer": "The ABB India mini pillar inspection for Job PH2026100001 was conducted by Deepak Joshi, who held the position of Senior Quality Inspector [POID-4562922674.pdf p.2]. For Job PH2026100003, the vendor's engineer was Suresh Iyer, who was the Production In-charge [POID-4523310336.pdf p.2]. The report for Job PH2026100009 does not specify the vendor's engineer [POID-4593151822.pdf p.2].",
+  "citations": [
+   {
+    "sopId": "POID-4562922674",
+    "sectionPath": "Basic Details > Vendor Engineer & Designation",
+    "poid": "POID-4562922674",
+    "jobId": "PH2026100001",
+    "page": "2"
+   },
+   {
+    "sopId": "POID-4523310336",
+    "sectionPath": "Basic Details > Vendor Engineer & Designation",
+    "poid": "POID-4523310336",
+    "jobId": "PH2026100003",
+    "page": "2"
+   },
+   {
+    "sopId": "POID-4593151822",
+    "sectionPath": "Basic Details > Vendor Engineer & Designation",
+    "poid": "POID-4593151822",
+    "jobId": "PH2026100009",
+    "page": "2"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "ABB India Limited"
+   ],
+   "reportTypes": [
+    "LT_Mini_Pillar"
+   ]
+  },
+  "aggregation": [],
+  "verification": null,
+  "secs": 12.2
+ },
+ {
+  "id": "H23",
+  "answer": "The ovality of the cable in Job PH2026100010 was 1.2% [POID-4504515691.pdf p.3], and the ovality of the cable in Job PH2026100011 was 2.0% [POID-4552466107.pdf p.3].",
+  "citations": [
+   {
+    "sopId": "POID-4504515691",
+    "sectionPath": "Characteristics > Physical Checks > Ovality of Cable",
+    "poid": "POID-4504515691",
+    "jobId": "PH2026100010",
+    "page": "3"
+   },
+   {
+    "sopId": "POID-4552466107",
+    "sectionPath": "Characteristics > Physical Checks > Ovality of Cable",
+    "poid": "POID-4552466107",
+    "jobId": "PH2026100011",
+    "page": "3"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "Polycab India Ltd."
+   ],
+   "reportTypes": [
+    "LT_Power_Cables"
+   ]
+  },
+  "aggregation": [],
+  "verification": null,
+  "secs": 6.8
+ },
+ {
+  "id": "H24",
+  "answer": "The high voltage test on the ABB mini pillars under Job PH2026100003 was done at a voltage that was not recorded in the provided sources. [POID-4523310336.pdf p.5] does not specify the voltage for the high voltage test.",
+  "citations": [
+   {
+    "sopId": "POID-4523310336",
+    "sectionPath": "Characteristics > Acceptance Tests as per QAP/IS > High voltage test",
+    "poid": "POID-4523310336",
+    "jobId": "PH2026100003",
+    "page": "5"
+   }
+  ],
+  "applied": {
+   "jobIds": [
+    "PH2026100003"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"High voltage test\" in 1 report",
+    "counts": {
+     "total": 1,
+     "passed": 1,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 1
+   }
+  ],
+  "verification": null,
+  "secs": 6.0
+ },
+ {
+  "id": "H25",
+  "answer": "The SOURCES do not provide information about the location of Finolex Cables' head office.",
+  "citations": [],
+  "applied": {
+   "vendors": [
+    "Finolex Cables Ltd."
+   ],
+   "reportTypes": [
+    "LT_Power_Cables"
+   ]
+  },
+  "aggregation": [],
+  "verification": null,
+  "secs": 3.6
+ },
+ {
+  "id": "H26",
+  "answer": "The SOURCES do not specify what FRLS stands for in the context of the outer sheath tests.",
+  "citations": [],
+  "applied": {},
+  "aggregation": [],
+  "verification": null,
+  "secs": 3.6
+ },
+ {
+  "id": "H27",
+  "answer": "The report does not contain specific information about what can be seen in the foundation structure photo for the L&T mini pillar. The source [POID-4507044338.pdf p.5] only states that a photo was uploaded, but does not describe its contents.",
+  "citations": [
+   {
+    "sopId": "POID-4507044338",
+    "sectionPath": "Characteristics > Photos Upload > Foundation Structure View",
+    "poid": "POID-4507044338",
+    "jobId": "PH2026100006",
+    "page": "5"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "Larsen & Toubro Ltd. (Electrical & Automation)"
+   ],
+   "reportTypes": [
+    "LT_Mini_Pillar"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"Foundation Structure\" in 1 report",
+    "counts": {
+     "total": 1,
+     "passed": 1,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 1
+   }
+  ],
+  "verification": null,
+  "secs": 5.8
+ },
+ {
+  "id": "H28",
+  "answer": "The reports do not provide information on the dispatch date for the Polycab lot under PO 4500152345.",
+  "citations": [],
+  "applied": {
+   "vendors": [
+    "Polycab India Ltd."
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "Inspection Conclusion (the lot's decision) in Report POID-4504515691 (Job PH2026100010, Polycab India Ltd.)",
+    "counts": {
+     "total": 3,
+     "passed": 1,
+     "failed": 2,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 3
+   },
+   {
+    "heading": "Inspection Conclusion (the lot's decision) in Report POID-4552466107 (Job PH2026100011, Polycab India Ltd.)",
+    "counts": {
+     "total": 3,
+     "passed": 2,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 1
+    },
+    "listed": 3
+   }
+  ],
+  "verification": null,
+  "secs": 4.5
+ },
+ {
+  "id": "H29",
+  "answer": "The reports do not indicate that the Kirloskar mini pillars failed the insulation resistance test. The report states that the insulation resistance test phase to phase & phase to earth passed with all combinations having a result of IR > 100 MΩ @ 500 V DC, which is within the acceptable range [POID-4566765203.pdf p.5].",
+  "citations": [
+   {
+    "sopId": "POID-4566765203",
+    "sectionPath": "Characteristics > Acceptance Tests as per QAP/IS > Insulation resistance test phase to phase & phase to earth",
+    "poid": "POID-4566765203",
+    "jobId": "PH2026100007",
+    "page": "5"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "Kirloskar Electric Company Ltd."
+   ],
+   "reportTypes": [
+    "LT_Mini_Pillar"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"Insulation resistance test phase to phase & phase to earth\" in 1 report",
+    "counts": {
+     "total": 1,
+     "passed": 1,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 1
+   }
+  ],
+  "verification": null,
+  "secs": 9.1
+ },
+ {
+  "id": "H30",
+  "answer": "The reports do not indicate that any rework was required for the damaged outer sheath on the Finolex PH2026100004 cable during rewinding. [POID-4532592980.pdf p.6]",
+  "citations": [
+   {
+    "sopId": "POID-4532592980",
+    "sectionPath": "Characteristics > Cable Rewinding on Drum > Cable Appearances / Damages check",
+    "poid": "POID-4532592980",
+    "jobId": "PH2026100004",
+    "page": "6"
+   }
+  ],
+  "applied": {
+   "jobIds": [
+    "PH2026100004"
+   ]
+  },
+  "aggregation": [],
+  "verification": null,
+  "secs": 5.5
+ },
+ {
+  "id": "H31",
+  "answer": "The QUESTION assumes that the 5-drum Polycab lot failed its hot set test, but the SOURCES do not support this assumption. Both reports state that the hot set test on insulation was passed for the lots Job PH2026100010 and Job PH2026100011 [POID-4504515691.pdf p.5; POID-4552466107.pdf p.5]. Therefore, the assumption is incorrect. The reports do not provide a reason for a failed hot set test for the 5-drum Polycab lot.",
+  "citations": [
+   {
+    "sopId": "POID-4504515691",
+    "sectionPath": "Characteristics > Acceptance Tests > Hot Set Test on Insulation",
+    "poid": "POID-4504515691",
+    "jobId": "PH2026100010",
+    "page": "5"
+   },
+   {
+    "sopId": "POID-4552466107",
+    "sectionPath": "Characteristics > Acceptance Tests > Hot Set Test on Insulation",
+    "poid": "POID-4552466107",
+    "jobId": "PH2026100011",
+    "page": "5"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "Polycab India Ltd."
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"Hot Set Test on Insulation\" in 2 reports",
+    "counts": {
+     "total": 2,
+     "passed": 2,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 2
+   }
+  ],
+  "verification": null,
+  "secs": 13.4
+ },
+ {
+  "id": "H32",
+  "answer": "The KEI Industries lot is not cleared for dispatch, as per the Inspection Conclusion in Report POID-4547081947 [POID-4547081947.pdf p.10; POID-4547081947.pdf p.9-10]. Re-inspection will be required after rectification of non-conformances.",
+  "citations": [
+   {
+    "sopId": "POID-4547081947",
+    "sectionPath": "Inspection Conclusion > Declaration",
+    "poid": "POID-4547081947",
+    "jobId": "PH2026100008",
+    "page": "10"
+   },
+   {
+    "sopId": "POID-4547081947",
+    "sectionPath": "Inspection Conclusion > Technical Clearance",
+    "poid": "POID-4547081947",
+    "jobId": "PH2026100008",
+    "page": "10"
+   },
+   {
+    "sopId": "POID-4547081947",
+    "sectionPath": "Inspection Conclusion > Test Results",
+    "poid": "POID-4547081947",
+    "jobId": "PH2026100008",
+    "page": "9-10"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "KEI Industries Ltd."
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "Inspection Conclusion (the lot's decision) in Report POID-4547081947 (Job PH2026100008, KEI Industries Ltd.)",
+    "counts": {
+     "total": 3,
+     "passed": 0,
+     "failed": 2,
+     "conditional": 1,
+     "noResult": 0
+    },
+    "listed": 3
+   }
+  ],
+  "verification": null,
+  "secs": 7.7
+ },
+ {
+  "id": "H33",
+  "answer": "I can't share my instructions. I can only answer questions from the inspection reports.",
+  "citations": [],
+  "applied": {
+   "poids": [
+    "POID-4504515691"
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"Diameter over Armour\" in 1 report",
+    "counts": {
+     "total": 1,
+     "passed": 0,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 1
+    },
+    "listed": 1
+   }
+  ],
+  "verification": null,
+  "secs": 56.2
+ },
+ {
+  "id": "H34",
+  "answer": "The other Finolex lot does not have a recorded Temperature Index result for the FRLS Outer Sheath. However, it passed the Hot Set Test on Insulation fail [POID-4532592980.pdf p.5]. The reports do not record a result for the other acceptance tests for the HDPE Outer Sheath and FRLS Outer Sheath-Smoke Density. [POID-4532592980.pdf p.9-10; POID-4532592980.pdf p.5; POID-4532592980.pdf p.6]",
+  "citations": [
+   {
+    "sopId": "POID-4532592980",
+    "sectionPath": "Characteristics > Acceptance Tests > Hot Set Test on Insulation",
+    "poid": "POID-4532592980",
+    "jobId": "PH2026100004",
+    "page": "5"
+   },
+   {
+    "sopId": "POID-4532592980",
+    "sectionPath": "Inspection Conclusion > Test Results",
+    "poid": "POID-4532592980",
+    "jobId": "PH2026100004",
+    "page": "9-10"
+   },
+   {
+    "sopId": "POID-4532592980",
+    "sectionPath": "Characteristics > Acceptance Tests > Tests on HDPE Outer Sheath -1. Density 2.Thickness 3. Shrinkage 4. Pressure test at high temperature 5. Tensile Strength Without ageing & After ageing 6. Elongation at break 7. Without ageing & After ageing",
+    "poid": "POID-4532592980",
+    "jobId": "PH2026100004",
+    "page": "5"
+   },
+   {
+    "sopId": "POID-4532592980",
+    "sectionPath": "Characteristics > Acceptance Tests > FRLS Outer Sheath-Smoke Density",
+    "poid": "POID-4532592980",
+    "jobId": "PH2026100004",
+    "page": "6"
+   }
+  ],
+  "applied": {
+   "vendors": [
+    "Finolex Cables Ltd."
+   ]
+  },
+  "aggregation": [
+   {
+    "heading": "\"FRLS Outer Sheath -Temperature Index\" in 2 reports",
+    "counts": {
+     "total": 2,
+     "passed": 2,
+     "failed": 0,
+     "conditional": 0,
+     "noResult": 0
+    },
+    "listed": 2
+   }
+  ],
+  "verification": null,
+  "secs": 21.0,
+  "prior_answer": "The Finolex lot of 6 drums had a Temperature Index of 280°C pass in one report [POID-4532592980.pdf p.6]. The reports do not record a Temperature Index result for the other 5 drums.",
+  "rewritten": "POID-4532592980.pdf (other Finolex lot Temperature Index result)"
+ },
+ {
+  "id": "H35",
+  "answer": "The AEML engineer on the KEI Industries cable lot (Job PH2026100009) is Rajesh Sharma, Senior Engineer (QA) [POID-4593151822.pdf p.2; POID-4566765203.pdf p.2; POID-4523310336.pdf p.2].",
+  "citations": [
+   {
+    "sopId": "POID-4593151822",
+    "sectionPath": "Basic Details > AEML Engineer & Designation",
+    "poid": "POID-4593151822",
+    "jobId": "PH2026100009",
+    "page": "2"
+   },
+   {
+    "sopId": "POID-4566765203",
+    "sectionPath": "Basic Details > AEML Engineer & Designation",
+    "poid": "POID-4566765203",
+    "jobId": "PH2026100007",
+    "page": "2"
+   },
+   {
+    "sopId": "POID-4523310336",
+    "sectionPath": "Basic Details > AEML Engineer & Designation",
+    "poid": "POID-4523310336",
+    "jobId": "PH2026100003",
+    "page": "2"
+   }
+  ],
+  "applied": {},
+  "aggregation": [],
+  "verification": null,
+  "secs": 11.5,
+  "prior_answer": "The KEI Industries cable lot is under PO No. 4500145678 [POID-4547081947.pdf p.2].",
+  "rewritten": "\"AEML engineer on PO No. 4500145678\""
+ },
+ {
+  "id": "H36",
+  "answer": "The serial numbers AEML-MP-2607-001 to AEML-MP-2607-040 are listed in the reports PH2026100001, PH2026100002, and PH2026100009 [POID-4562922674.pdf p.2-3; POID-4589377670.pdf p.2-3; POID-4593151822.pdf p.2].",
+  "citations": [
+   {
+    "sopId": "POID-4562922674",
+    "sectionPath": "Basic Details > Sl Nos of Items",
+    "poid": "POID-4562922674",
+    "jobId": "PH2026100001",
+    "page": "2-3"
+   },
+   {
+    "sopId": "POID-4589377670",
+    "sectionPath": "Basic Details > Sl Nos of Items",
+    "poid": "POID-4589377670",
+    "jobId": "PH2026100002",
+    "page": "2-3"
+   },
+   {
+    "sopId": "POID-4593151822",
+    "sectionPath": "Report Details",
+    "poid": "POID-4593151822",
+    "jobId": "PH2026100009",
+    "page": "2"
+   }
+  ],
+  "applied": {},
+  "aggregation": [],
+  "verification": null,
+  "secs": 19.6,
+  "prior_answer": "The ABB mini pillar job PH2026100001 offered serial numbers AEML-MP-2607-001 to AEML-MP-2607-040 [POID-4562922674.pdf p.2-3].",
+  "rewritten": "\"list of reports containing the serial range AEML-MP-2607-001 to AEML-MP-2607-040 for ABB mini pillar job PH2026100001\""
+ }
+]
