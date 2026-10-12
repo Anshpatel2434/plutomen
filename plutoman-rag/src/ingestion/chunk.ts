@@ -219,9 +219,16 @@ export function chunkReport(report: ParsedReport, ids: ReportIds = {}): ChunkedR
 
   // 3) Inspection Conclusion — the verdict-bearing summary rows.
   const c = report.conclusion;
+  const notes = c.notes ?? { testResults: "", technicalClearance: "", declaration: "" };
   if (c.testResults) {
     chunks.push(
-      makeConclusionChunk(prefix, "Test Results", c.testResults, normalizeVerdict(c.testResults))
+      makeConclusionChunk(
+        prefix,
+        "Test Results",
+        c.testResults,
+        normalizeVerdict(c.testResults),
+        notes.testResults
+      )
     );
   }
   if (c.technicalClearance) {
@@ -230,7 +237,8 @@ export function chunkReport(report: ParsedReport, ids: ReportIds = {}): ChunkedR
         prefix,
         "Technical Clearance",
         c.technicalClearance,
-        normalizeVerdict(c.technicalClearance)
+        normalizeVerdict(c.technicalClearance),
+        notes.technicalClearance
       )
     );
   }
@@ -238,11 +246,19 @@ export function chunkReport(report: ParsedReport, ids: ReportIds = {}): ChunkedR
     // Declarations carry the dispatch decision ("Lot cleared for dispatch",
     // "Material is rejected for the offered lot"), so they get a verdict too.
     chunks.push(
-      makeConclusionChunk(prefix, "Declaration", c.declaration, normalizeVerdict(c.declaration))
+      makeConclusionChunk(
+        prefix,
+        "Declaration",
+        c.declaration,
+        normalizeVerdict(c.declaration),
+        notes.declaration
+      )
     );
   }
   for (const extra of c.extra) {
-    chunks.push(makeConclusionChunk(prefix, extra.title, extra.answer, normalizeVerdict(extra.answer)));
+    chunks.push(
+      makeConclusionChunk(prefix, extra.title, extra.answer, normalizeVerdict(extra.answer), extra.notes)
+    );
   }
 
   return { metadata, chunks };
@@ -281,14 +297,20 @@ function makeDetailChunk(prefix: string, item: ChecklistItem): Chunk {
   };
 }
 
-/** Build a chunk for a Conclusion field. */
+/**
+ * Build a chunk for a Conclusion field. The inspector's note goes into the
+ * searchable text (same "- note" form as checklist items) but NOT into the
+ * verdict, which comes from the recorded answer alone: notes can contradict
+ * it (e.g. Test Results "Not Ok" with the note "All acceptance tests Pass").
+ */
 function makeConclusionChunk(
   prefix: string,
   title: string,
   answer: string,
-  verdict: string | null
+  verdict: string | null,
+  note = ""
 ): Chunk {
   const sectionPath = `Inspection Conclusion > ${title}`;
-  const content = `${prefix}Inspection Conclusion / ${title}: ${answer}`;
+  const content = `${prefix}Inspection Conclusion / ${title}: ${answer}${note ? ` - ${note}` : ""}`;
   return { sectionPath, question: title, answer, verdict, content };
 }

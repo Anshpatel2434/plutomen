@@ -48,3 +48,27 @@ test("section path does not repeat 'Basic Details'", async () => {
   const sap = chunks.find((c) => c.question === "SAP Code")!;
   assert.equal(sap.sectionPath, "Basic Details > SAP Code");
 });
+
+test("conclusion notes are searchable (Q11, Q36)", async () => {
+  // LT_Mini_Pillar.xlsx = job PH2026100009 (Q11).
+  const q11 = await chunksOf("LT_Mini_Pillar.xlsx");
+  const tr = q11.find((c) => c.sectionPath === "Inspection Conclusion > Test Results");
+  assert.ok(tr);
+  assert.match(tr.content, /Test Results: Not Ok - Lot not meeting QAP acceptance criteria\./);
+  assert.equal(tr.answer, "Not Ok", "answer stays the recorded value (PDF page lookup keys on it)");
+
+  // LT_Power_Cables (4).xlsx = Finolex job PH2026100004 (Q36).
+  const q36 = await chunksOf("LT_Power_Cables (4).xlsx");
+  const tc = q36.find((c) => c.sectionPath === "Inspection Conclusion > Technical Clearance");
+  assert.ok(tc);
+  assert.match(tc.content, /Subject to rectification or not cleared for dispatch\./);
+});
+
+test("a conclusion note never changes the verdict", async () => {
+  // Test Results "Not Ok" with the contradicting note "All acceptance tests Pass".
+  const chunks = await chunksOf("LT_Mini_Pillar (5).xlsx");
+  const tr = chunks.find((c) => c.sectionPath === "Inspection Conclusion > Test Results");
+  assert.ok(tr);
+  assert.match(tr.content, /All acceptance tests Pass/);
+  assert.equal(tr.verdict, "NOT OK");
+});

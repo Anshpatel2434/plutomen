@@ -56,6 +56,12 @@ export interface Conclusion {
   testResults: string;
   technicalClearance: string;
   declaration: string;
+  /**
+   * The inspector's note against each known field, keyed "testResults" /
+   * "technicalClearance" / "declaration" ("" when none). Often the only place
+   * the reason is written (e.g. "Lot not meeting QAP acceptance criteria.").
+   */
+  notes?: { testResults: string; technicalClearance: string; declaration: string };
   /** Any other conclusion rows kept verbatim. */
   extra: ChecklistItem[];
 }
@@ -151,13 +157,20 @@ export async function parseWorkbookBuffer(buffer: Buffer): Promise<ParsedReport>
 
   // --- Inspection Conclusion: pick out the three known fields ---
   const conclusionRows = readItemSheet(wb.getWorksheet(SHEET.conclusion));
-  const findByTitle = (t: string): string =>
-    conclusionRows.find((r) => r.title.toLowerCase() === t.toLowerCase())?.answer ?? "";
+  const rowByTitle = (t: string) =>
+    conclusionRows.find((r) => r.title.toLowerCase() === t.toLowerCase());
+  const findByTitle = (t: string): string => rowByTitle(t)?.answer ?? "";
+  const noteFor = (t: string): string => rowByTitle(t)?.notes ?? "";
   const knownTitles = new Set(["test results", "technical clearance", "declaration"]);
   const conclusion: Conclusion = {
     testResults: findByTitle("Test Results"),
     technicalClearance: findByTitle("Technical Clearance"),
     declaration: findByTitle("Declaration"),
+    notes: {
+      testResults: noteFor("Test Results"),
+      technicalClearance: noteFor("Technical Clearance"),
+      declaration: noteFor("Declaration"),
+    },
     extra: conclusionRows.filter((r) => !knownTitles.has(r.title.toLowerCase())),
   };
 
