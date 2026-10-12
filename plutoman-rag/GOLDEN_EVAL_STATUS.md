@@ -3,7 +3,7 @@
 Status of the RAG pipeline against the **Golden Evaluation Q&A Set** (40 test
 cases, 22 scenarios, behaviours ANSWER / ABSTAIN / CLARIFY / CORRECT_PREMISE /
 REFUSE_OVERRIDE). Branch `testing/pipeline-docker`; `main` is untouched.
-Last updated 10 Oct 2026.
+Last updated 12 Oct 2026 (round 4: Docker images + fixes, see §2).
 
 How to undo any of this: [ROLLBACK.md](ROLLBACK.md).
 
@@ -11,7 +11,7 @@ How to undo any of this: [ROLLBACK.md](ROLLBACK.md).
 
 ## 1. Headline numbers
 
-All runs use the same 13 demo reports, the same local models (Ollama
+All runs use the same 11 demo reports, the same local models (Ollama
 `nomic-embed-text` + `mistral` 7B, partly GPU-offloaded on a 4 GB card) and the
 same grader.
 
@@ -21,6 +21,14 @@ same grader.
 |---|---|---|---|
 | Before (tag `pre-eval-changes`) | 21 / 34 | 74.6 % | 42.6 % |
 | After changes 1–3, 5, 8 | **29 / 34** | **92.3 %** | **6.2 %** |
+| + conclusion notes | 29 / 34 | 92.7 % | 6.2 % |
+| + change 10, TOC and footer chunks (current) | 28 / 34 | 89.8 % | 5.9 % |
+
+The 34 exclude Q18 and Q20, whose sources were not indexed before change 10;
+both now retrieve and answer correctly. Change 10 costs Q28 (an ABSTAIN case):
+its gold line was ranked 10th, and the new contents chunk pushes it to 12th.
+Q28's answer still abstains correctly, so this is a metric-only loss. #4 and #9
+are the real fix.
 
 ### Answers (full golden set through the real API)
 
@@ -70,8 +78,14 @@ Each change is one commit. The tags mark the state before each round.
 | — | Web UI shows `CONDITIONAL` verdicts as neutral, not as a pass | `5c3eb59` | Q22, Q36 | — |
 | — | One failed request no longer crashes the API: errors go to a 500 for that request only. Found when the local GPU runner crashed mid-eval | `68e83c5` | robustness | — |
 | — | Docker host ports configurable, and the `ingest:demo` hang fixed | `d43a578` | — | testers can run the stack next to other Postgres instances |
+| — | **Round 4.** Ingest queue no longer drops document updates: every enqueue is its own job; a per-document sequence + lock means the newest update wins | `21a628b` | robustness | 3 back-to-back re-ingests: 33 jobs done, 7 stale ones skipped, no duplicates |
+| — | **Docker images for api, worker and web** (`plutoman-rag:local`, `plutoman-web:local`); one command starts the whole test stack (see README "Run everything in Docker") | `556b2b5` | — | UI, search and cited answers verified through the containers |
+| — | Read replica gets its own profile + replication slot (it was looping on "WAL segment already removed") | `a99a033` | — | fresh clone and re-clone both stream |
+| — | Citation ranges such as `[S1-S10]` are rendered | `5c4da9e` | Q22 | — |
+| — | Inspector's notes on conclusion rows are indexed | `88c648b` | Q11, Q31, Q36 | Q09 coverage 17 % → 33 % |
+| 10 | Table of contents and footer chunks, from the PDF twin | `01447a1` | Q18, Q20 | both now answered correctly (see §1 for the Q28 trade-off) |
 
-Tests: 88 offline and DB tests pass (`npm test`). They include tenant-isolation
+Tests: 98 offline and DB tests pass (`npm test`). They include tenant-isolation
 tests for the entity catalog and the keyword lexicon.
 
 ---
@@ -94,24 +108,24 @@ Content = provisional grader (see §1).
 | Q08 | ANSWER | 50 % | pass | pass | comparison across two reports: needs #4 |
 | Q09 | ANSWER | 17 % | fail | fail | comparison across six reports: needs #4 |
 | Q10 | ANSWER | 100 % | pass | pass | — |
-| Q11 | ANSWER | 100 % | fail | fail | conclusion-sheet **notes are not indexed** (data gap) |
+| Q11 | ANSWER | 100 % | fail | fail | note now indexed (round 4), but the Test Results row is not in the top 10; needs the complete conclusion section (#4) |
 | Q12 | ANSWER | 100 % | pass | pass | — |
 | Q13 | ANSWER | 100 % | fail | fail | counts 3 of 4 failures; needs the complete section (#4) |
 | Q14 | ANSWER | 100 % | pass | pass | — |
 | Q15 | ANSWER | 60 % | pass | pass | retrieval across all reports is incomplete (#4) |
 | Q16 | ANSWER | 100 % | fail | fail | over-abstains although the note is retrieved |
 | Q17 | ANSWER | 100 % | pass | pass | — |
-| Q18 | ANSWER | n/a | fail | fail | needs a section-list (TOC) chunk (#10) |
+| Q18 | ANSWER | now retrieved | fail | answers correctly (round 4, not graded) | change 10 done; the model writes "sources S1, S3" as prose, not citations, and adds a guess about one report |
 | Q19 | ANSWER | 100 % | fail | pass | — |
-| Q20 | ANSWER | n/a | fail | fail | needs footer chunks (#10) |
+| Q20 | ANSWER | now retrieved | fail | answers correctly (round 4, not graded) | change 10 done; the answer cites no source |
 | Q21 | ANSWER | 100 % | fail | fail | says all tests passed; needs the complete section (#4) |
-| Q22 | ANSWER | 100 % | fail | fail | misses the "subject to rectification" item; emits a raw `[S1-S10]` range marker (see §4) |
+| Q22 | ANSWER | 100 % | fail | fail | misses the "subject to rectification" item (the raw `[S1-S10]` marker is fixed in round 4) |
 | Q23 | ANSWER | 50 % | fail | pass | — |
 | Q24 | ANSWER | 100 % | pass | pass | — |
 | Q25 | ANSWER | 100 % | pass | pass | — |
 | Q26 | CLARIFY | 100 % | pass | pass | — |
 | Q27 | CLARIFY | 100 % | pass | pass | — |
-| Q28 | ABSTAIN | 100 % | pass | pass | — |
+| Q28 | ABSTAIN | 100 % → 0 % after change 10 | pass | pass | still abstains correctly; see §1 |
 | Q29 | ABSTAIN | 100 % | pass | pass | — |
 | Q30 | ABSTAIN | n/a | pass | pass | — |
 | Q31 | CORRECT_PREMISE | 100 % | pass | pass | — |
@@ -119,7 +133,7 @@ Content = provisional grader (see §1).
 | Q33 | ABSTAIN | 100 % | fail (wrong doc cited) | fail | still explains the severity terms from general knowledge |
 | Q34 | ABSTAIN | n/a | pass (wrong doc cited) | pass | — |
 | Q35 | ANSWER | 100 % | pass | fail † | reports both sides correctly; † likely a grader false negative |
-| Q36 | ANSWER | 60 % | fail | fail | drops the "subject to rectification" condition; notes not indexed |
+| Q36 | ANSWER | 60 % | fail | fail | the note is now retrieved (3rd), but the model still answers a flat "Yes"; needs #9 |
 | Q37 | ABSTAIN | 100 % | pass | pass | — |
 | Q38 | ANSWER (multi-turn) | n/a | fail | not re-run (first prompt: fail) | resolves "the other job" to the wrong report; needs multi-turn seeding |
 | Q39 | ANSWER (multi-turn) | n/a | pass | not re-run (first prompt: pass) | — |
@@ -133,12 +147,10 @@ Content = provisional grader (see §1).
 
 | # | Item | Cases | Notes |
 |---|---|---|---|
-| 4 | **Aggregation and complete-section retrieval**: when a question asks to count, list or compare ("how many…", "which… did not pass", "across all…"), fetch every item of that section, or that field across every matching report, instead of the top 10 | Q08, Q09, Q13, Q15, Q21, Q22 | largest remaining gap; the remaining retrieval misses are all this kind |
+| 4 | **Aggregation and complete-section retrieval**: when a question asks to count, list or compare ("how many…", "which… did not pass", "across all…"), fetch every item of that section, or that field across every matching report, instead of the top 10 | Q08, Q09, Q11, Q13, Q15, Q21, Q22 | largest remaining gap; the remaining retrieval misses are all this kind |
 | 9 | **No-answer threshold + verification step**: decide abstain/answer from retrieval scores, and check the draft answer's values against the cited source before returning it | Q03, Q06, Q07, Q16, Q32, Q33, Q36 | addresses most of the change-6 regressions; best tuned on Ministral |
-| 10 | **TOC and footer chunks**: index the report's section list and the footer contact block once per report type | Q18, Q20 | small |
-| — | **Index conclusion-sheet notes** (currently dropped at parse time) | Q11, Q31, Q36 | data gap found during the eval |
 | — | **Multi-turn seeding**: carry the resolved job and POID filters from the previous turn and exclude the already-discussed report for "the other…" | Q38, Q39 | — |
-| — | Render citation **range markers** such as `[S1-S10]`; today they are left as raw text | Q22 | small bug in `citations.ts` |
+| — | **Uncited or prose-cited answers**: the model sometimes cites nothing (Q20) or writes "sources S1, S3" in prose instead of `[S1]`. Either re-prompt once when an ANSWER has no markers, or render bare markers | Q18, Q20 | belongs with #9 |
 
 ### Model and hosting
 
@@ -151,12 +163,8 @@ Content = provisional grader (see §1).
 
 ### Infrastructure and known bugs
 
-- **BullMQ fixed `jobId` silently drops document updates**: re-ingesting a
-  report while its previous job is still in the queue is ignored. This needs a
-  per-version job ID or an explicit replace.
-- **Docker images for app / worker / web are not built yet.** Only the
-  infrastructure services (Postgres, PgBouncer, replica, Redis, Ollama) run in
-  Docker. Testers currently run the API, worker and UI with `npm`.
+- Done in round 4: the queue update-drop bug, Docker images for api / worker /
+  web, and the replica WAL loop.
 - `npm audit` reports dependency vulnerabilities that have not been reviewed.
 
 ### Inputs needed from the client

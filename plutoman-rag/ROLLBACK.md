@@ -3,6 +3,37 @@
 Branch: `testing/pipeline-docker`. **`main` is not affected by any of this.**
 Current status against the golden set: [GOLDEN_EVAL_STATUS.md](GOLDEN_EVAL_STATUS.md).
 
+## Round 4 (Docker, queue, replica, notes, change 10)
+
+| Commit | What it changes | Index needs re-ingest? |
+|---|---|---|
+| `01447a1` | **Eval change 10**: table-of-contents and footer chunks from the PDF | yes |
+| `88c648b` | conclusion-row notes indexed | yes |
+| `5c4da9e` | citation ranges such as `[S1-S10]` rendered | no |
+| `a99a033` | replica: own profile, replication slot, `max_slot_wal_keep_size` | no |
+| `556b2b5` | Docker images + compose `app` / `demo` profiles; UI calls `/api` | no |
+| `21a628b` | ingest queue: unique sequenced jobs, newest update wins | no |
+| tag `pre-round-4` (`1ab0db9`) | the state before this round | — |
+
+No migration in this round. Each commit reverts on its own:
+
+```bash
+git revert --no-edit 01447a1                     # e.g. undo change 10 only
+git revert --no-edit pre-round-4..HEAD           # undo the whole round
+npm run build                                    # or rebuild the images:
+docker compose --profile app up -d --build
+```
+
+After reverting `01447a1` or `88c648b`, re-index (`npm run ingest:demo`, or
+`docker compose --profile demo run --rm ingest-demo`); each report replaces
+its own copy, so nothing is duplicated. Reverting `556b2b5` puts the UI back on
+`http://localhost:3000` (CORS) and removes the app containers; the
+infrastructure services are unchanged. After reverting `a99a033`, drop the slot
+on the primary if a replica was ever started with it:
+`SELECT pg_drop_replication_slot('plutoman_replica');`.
+
+---
+
 ## Changes 6 and 7 (answer generation — no database changes)
 
 | Commit | What it changes |
