@@ -31,6 +31,13 @@ export interface IngestJobData {
   pdfRef?: string;
   /** For upsert: inlined payloads (base64), when the adapter shares no filesystem. */
   parsedPayload?: { xlsxBase64?: string; pdfBase64?: string };
+  /**
+   * Per-document sequence number, set by enqueueIngest. The worker applies a
+   * job only if no newer job for the same document has been enqueued (see
+   * isSuperseded), so the LATEST update always wins whatever order jobs finish
+   * in. Absent for inline (non-queued) ingestion, which is always applied.
+   */
+  seq?: number;
 }
 
 /**
@@ -59,10 +66,21 @@ export async function closeQueue(): Promise<void> {
   await producerConnection.quit();
 }
 
-/** Convenience producer used by the API + demo script. */
+/** Redis key holding the latest sequence number enqueued for one document. */
+export function seqKey(tenantId: string, mongoId: string): string {
+  return `ingest:seq:${tenantId}:${mongoId}`;
+}
+
+/**
+ * Enqueue an upsert/delete. Every call gets a NEW job: the job id carries a
+ * per-document sequence number. (A fixed per-document job id used to make
+ * BullMQ silently drop any update of a document whose previous job was still
+ * waiting or retained as completed.) Superseded jobs skip themselves in the
+ * worker. `|` separates the parts because BullMQ rejects most ids with `:`.
+ */
 export async function enqueueIngest(data: IngestJobData): Promise<string> {
-  // Job id keyed by tenant+mongo+action so duplicate enqueues collapse.
-  const jobId = `${data.tenantId}:${data.mongoId}:${data.action}`;
-  const job = await ingestQueue.add(data.action, data, { jobId });
+  const seq = await producerConnection.incr(seqKey(data.tenantId, data.mongoId));
+  const jobId = [data.tenantId, data.mongoId, data.action, seq].join("|");
+  const job = await ingestQueue.add(data.action, { ...data, seq }, { jobId });
   return job.id ?? jobId;
 }

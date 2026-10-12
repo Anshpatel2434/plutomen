@@ -13,12 +13,14 @@
  * For a delete: remove the document (chunks cascade) for (tenant_id, mongo_id).
  *
  * The whole thing is idempotent: re-running the same job converges to the same
- * state, and job ids in queue.ts collapse duplicate enqueues.
+ * state. Every enqueue is its own job; when several jobs for one document are
+ * in flight, only the most recently enqueued one writes (see writeIsCurrent).
  */
 import { readFile } from "fs/promises";
 import { Worker } from "bullmq";
+import type { PoolClient } from "pg";
 import { withTenant } from "../db";
-import { invalidateTenant } from "../cache";
+import { cacheClient, invalidateTenant } from "../cache";
 import { embed, EMBED_MODEL, EMBED_VERSION, toVectorLiteral } from "../embeddings";
 import { parseWorkbookBuffer } from "./parseXlsx";
 import { chunkReport } from "./chunk";
@@ -27,7 +29,34 @@ import {
   INGEST_QUEUE_NAME,
   IngestJobData,
   createRedisConnection,
+  seqKey,
 } from "./queue";
+
+/** True when a newer job for the same document has been enqueued. */
+export function isSuperseded(jobSeq: number | undefined, latestSeq: number | null): boolean {
+  return jobSeq !== undefined && latestSeq !== null && latestSeq > jobSeq;
+}
+
+/**
+ * First step of every write transaction. Takes a lock on this ONE document
+ * (transaction-scoped, so it is safe under PgBouncer transaction pooling and
+ * released at COMMIT), then checks that no newer job for it was enqueued. A
+ * newer job always bumps the sequence before it can reach this lock, so
+ * whichever order the jobs finish in, the latest enqueued state is what stays.
+ */
+async function writeIsCurrent(client: PoolClient, data: IngestJobData): Promise<boolean> {
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+    `${data.tenantId}|${data.mongoId}`,
+  ]);
+  if (data.seq === undefined) return true;
+  const latest = await cacheClient.get(seqKey(data.tenantId, data.mongoId));
+  const current = !isSuperseded(data.seq, latest === null ? null : Number(latest));
+  if (!current) {
+    // eslint-disable-next-line no-console
+    console.log(`[ingest] skipped ${data.mongoId} job #${data.seq}: superseded by #${latest}`);
+  }
+  return current;
+}
 
 /** Resolve the xlsx bytes for an upsert job from either a path or inline base64. */
 async function loadBuffer(data: IngestJobData): Promise<Buffer> {
@@ -56,7 +85,9 @@ async function loadPdf(data: IngestJobData): Promise<ParsedPdf | null> {
  * without a running worker. All tenant data access goes through withTenant so
  * RLS is always in force.
  */
-export async function ingestUpsert(data: IngestJobData): Promise<{ chunks: number }> {
+export async function ingestUpsert(
+  data: IngestJobData
+): Promise<{ chunks: number; skipped?: boolean }> {
   const buffer = await loadBuffer(data);
   const report = await parseWorkbookBuffer(buffer);
 
@@ -87,6 +118,8 @@ export async function ingestUpsert(data: IngestJobData): Promise<{ chunks: numbe
   );
 
   return withTenant(data.tenantId, async (client) => {
+    if (!(await writeIsCurrent(client, data))) return { chunks: 0, skipped: true };
+
     // 1) Upsert the parent document row.
     const docRes = await client.query<{ id: string }>(
       `INSERT INTO documents (tenant_id, mongo_id, type, title, status, section_path,
@@ -177,6 +210,7 @@ export async function ingestUpsert(data: IngestJobData): Promise<{ chunks: numbe
 /** Core delete routine — remove a document + its chunks (cascade). */
 export async function ingestDelete(data: IngestJobData): Promise<void> {
   await withTenant(data.tenantId, async (client) => {
+    if (!(await writeIsCurrent(client, data))) return;
     await client.query(`DELETE FROM documents WHERE tenant_id = $1 AND mongo_id = $2`, [
       data.tenantId,
       data.mongoId,
