@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Phase-1 foundation for a multi-tenant hybrid RAG retrieval service (extension for an existing MEAN app).",
-  "main": "dist/server.js",
+  "main": "dist/src/server.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
@@ -11,7 +11,8 @@
     "migrate": "ts-node scripts/migrate.ts",
     "ingest:demo": "ts-node scripts/ingest-demo.ts",
     "test": "tsx --test test/*.test.ts",
-    "start": "node dist/server.js"
+    "start": "node dist/src/server.js",
+    "start:worker": "node dist/src/ingestion/ingestWorker.js"
   },
   "dependencies": {
     "axios": "^1.7.7",

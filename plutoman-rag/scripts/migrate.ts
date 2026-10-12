@@ -12,7 +12,9 @@ import { Pool } from "pg";
 import { config } from "../src/config";
 
 async function main(): Promise<void> {
-  const dir = resolve(__dirname, "..", "db", "migrations");
+  // MIGRATIONS_DIR is set in the Docker image, where this runs compiled from
+  // dist/scripts and the relative default would not resolve.
+  const dir = process.env.MIGRATIONS_DIR ?? resolve(__dirname, "..", "db", "migrations");
   const files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
 
   if (files.length === 0) {

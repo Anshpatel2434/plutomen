@@ -11,6 +11,24 @@
 #   docker compose exec ollama ollama pull mistral
 # (swap `mistral` for `llama3.3` if you set GEN_MODEL=llama3.3)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Application environment shared by the api / worker / migrate / ingest-demo
+# containers (profile `app`). Service names replace localhost; values can be
+# overridden from the shell or a .env file next to this compose file.
+# ---------------------------------------------------------------------------
+x-app-env: &app-env
+  DATABASE_URL: postgres://plutoman_app:app_password@pgbouncer:6432/plutoman
+  REDIS_URL: redis://redis:6379
+  OLLAMA_URL: http://ollama:11434
+  EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+  GEN_MODEL: ${GEN_MODEL:-mistral}
+  JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+  CACHE_ENABLED: ${CACHE_ENABLED:-true}
+  KW_MIN_MATCH_SHARE: ${KW_MIN_MATCH_SHARE:-0.4}
+  # Test stack only: lets the demo UI mint tokens via POST /dev/token.
+  # Never enable on anything reachable from outside.
+  DEV_MODE: ${DEV_MODE:-true}
+
 services:
   postgres:
     # pgvector/pgvector ships stock Postgres 16 with the `vector` extension available.
@@ -160,6 +178,113 @@ services:
     volumes:
       - ollamadata:/root/.ollama
     # After `up`, remember to pull the models (see header comment).
+
+  # =========================================================================
+  # Application containers — profile `app` (see README "Run everything in
+  # Docker"). Plain `docker compose up -d` still starts only the services above.
+  # =========================================================================
+
+  # One-shot: pull the embedding + generation models into the ollama volume.
+  ollama-pull:
+    image: ollama/ollama:latest
+    profiles: ["app", "demo"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["sh", "-c", "ollama pull nomic-embed-text && ollama pull ${GEN_MODEL:-mistral}"]
+    depends_on:
+      - ollama
+    restart: "no"
+
+  # One-shot: schema, roles and RLS policies (connects as the DB OWNER,
+  # directly to Postgres — DDL must bypass PgBouncer).
+  migrate:
+    build: .
+    image: plutoman-rag:local
+    profiles: ["app", "demo"]
+    command: ["node", "dist/scripts/migrate.js"]
+    environment:
+      <<: *app-env
+      MIGRATION_DATABASE_URL: postgres://plutoman_owner:owner_password@postgres:5432/plutoman
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: plutoman-rag:local
+    build: .
+    container_name: plutoman-api
+    profiles: ["app"]
+    environment:
+      <<: *app-env
+      PORT: 3000
+    ports:
+      - "${API_HOST_PORT:-3000}:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_started
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+  worker:
+    image: plutoman-rag:local
+    build: .
+    container_name: plutoman-worker
+    profiles: ["app"]
+    command: ["node", "dist/src/ingestion/ingestWorker.js"]
+    environment: *app-env
+    # Lets queued demo jobs (ingest-demo --enqueue) reference the demo files.
+    volumes:
+      - ../demo_data:/data/demo:ro
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_started
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+  web:
+    build: ./web
+    image: plutoman-web:local
+    container_name: plutoman-web
+    profiles: ["app"]
+    ports:
+      - "${WEB_HOST_PORT:-8080}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # One-shot, profile `demo`: index the 11 demo reports (+ PDF twins) from
+  # ../demo_data. Safe to re-run — each report replaces its previous copy.
+  ingest-demo:
+    image: plutoman-rag:local
+    build: .
+    profiles: ["demo"]
+    command: ["node", "dist/scripts/ingest-demo.js"]
+    environment: *app-env
+    volumes:
+      - ../demo_data:/data/demo:ro
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      ollama-pull:
+        condition: service_completed_successfully
+    restart: "no"
 
 volumes:
   pgdata:

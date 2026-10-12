@@ -73,7 +73,8 @@ async function pairTwins(demoDir: string, xlsxFiles: string[], pdfFiles: string[
 
 async function main(): Promise<void> {
   const useQueue = process.argv.includes("--enqueue");
-  const demoDir = resolve(__dirname, "..", "..", "demo_data");
+  // DEMO_DATA_DIR is set in the Docker image (demo_data is mounted there).
+  const demoDir = process.env.DEMO_DATA_DIR ?? resolve(__dirname, "..", "..", "demo_data");
 
   let files: string[];
   let pdfFiles: string[];

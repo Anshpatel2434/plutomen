@@ -2,8 +2,12 @@ import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
-/** Base URL of the Retrieval Service (Phase-1..3 backend). */
-export const API_BASE = 'http://localhost:3000';
+/**
+ * Base URL of the Retrieval Service. Same-origin path: `ng serve` forwards it
+ * to http://localhost:3000 (proxy.conf.json) and the Docker image's nginx
+ * forwards it to the api container, so the browser never needs CORS.
+ */
+export const API_BASE = '/api';
 
 export interface SearchFilters {
   site?: string;
