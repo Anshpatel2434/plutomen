@@ -71,40 +71,15 @@ export interface HybridOptions {
 }
 
 /**
- * Run the hybrid RRF query for `queryText` within `tenantId`.
- * Returns fused, ranked chunks with citations.
+ * SQL predicates (over `chunks` columns) for retrieval filters. Appends the
+ * filter values to `params` and returns clauses that reference them by
+ * position; `tenantParam` is the placeholder already bound to the trusted
+ * tenantId (used in the documents subquery as defense in depth on top of RLS).
+ * Shared by hybridSearch and the aggregation queries (aggregate.ts), so both
+ * scope to exactly the same reports.
  */
-export async function hybridSearch(
-  tenantId: string,
-  queryText: string,
-  opts: HybridOptions = {}
-): Promise<RetrievalHit[]> {
-  const k = opts.k ?? 50;
-  const topN = opts.topN ?? 10;
-
-  // Embed the query with the query task prefix.
-  const [queryVec] = await embed([queryText], "query");
-  const vecLiteral = toVectorLiteral(queryVec);
-
-  // Keyword side (eval change 8): the question's words that occur in this
-  // tenant's index, plus typo corrections from the tenant's own lexicon
-  // ("cabel" -> "cabl"), each weighted by rarity (IDF).
-  const kw = await keywordTerms(tenantId, queryText);
-
-  // Build optional metadata predicates. These are shared by both CTEs so the
-  // filter is applied consistently to dense and sparse candidate pools.
-  // Params order (fixed): $1 queryVec, $2 k, $3 queryText, $4 topN, $5 tenantId,
-  // then filters.
-  const params: unknown[] = [vecLiteral, k, queryText, topN];
-
-  // Redundant with RLS by design — defense in depth. Bind the trusted tenantId
-  // (from the JWT) as an explicit predicate applied to BOTH candidate CTEs, so
-  // even a hypothetical RLS misconfig cannot leak another tenant's chunks.
-  params.push(tenantId);
-  const tenantClause = `tenant_id = $${params.length}`;
-
+export function filterSql(f: RetrievalFilters, params: unknown[], tenantParam: string): string[] {
   const filterClauses: string[] = [];
-  const f = opts.filters ?? {};
   if (f.site) {
     params.push(f.site);
     filterClauses.push(`site = $${params.length}`);
@@ -138,9 +113,46 @@ export async function hybridSearch(
     // documents is RLS-scoped too; the explicit tenant predicate is defense in depth.
     filterClauses.push(
       `document_id IN (SELECT d.id FROM documents d
-                        WHERE d.tenant_id = $5 AND d.title = ANY($${params.length}::text[]))`
+                        WHERE d.tenant_id = ${tenantParam} AND d.title = ANY($${params.length}::text[]))`
     );
   }
+  return filterClauses;
+}
+
+/**
+ * Run the hybrid RRF query for `queryText` within `tenantId`.
+ * Returns fused, ranked chunks with citations.
+ */
+export async function hybridSearch(
+  tenantId: string,
+  queryText: string,
+  opts: HybridOptions = {}
+): Promise<RetrievalHit[]> {
+  const k = opts.k ?? 50;
+  const topN = opts.topN ?? 10;
+
+  // Embed the query with the query task prefix.
+  const [queryVec] = await embed([queryText], "query");
+  const vecLiteral = toVectorLiteral(queryVec);
+
+  // Keyword side (eval change 8): the question's words that occur in this
+  // tenant's index, plus typo corrections from the tenant's own lexicon
+  // ("cabel" -> "cabl"), each weighted by rarity (IDF).
+  const kw = await keywordTerms(tenantId, queryText);
+
+  // Build optional metadata predicates. These are shared by both CTEs so the
+  // filter is applied consistently to dense and sparse candidate pools.
+  // Params order (fixed): $1 queryVec, $2 k, $3 queryText, $4 topN, $5 tenantId,
+  // then filters.
+  const params: unknown[] = [vecLiteral, k, queryText, topN];
+
+  // Redundant with RLS by design — defense in depth. Bind the trusted tenantId
+  // (from the JWT) as an explicit predicate applied to BOTH candidate CTEs, so
+  // even a hypothetical RLS misconfig cannot leak another tenant's chunks.
+  params.push(tenantId);
+  const tenantClause = `tenant_id = $${params.length}`;
+
+  const filterClauses = filterSql(opts.filters ?? {}, params, "$5");
   // modality = 'text' keeps Phase-1 to text chunks (multimodal is future work).
   // tenantClause is redundant with RLS by design — defense in depth.
   const baseWhere = ["modality = 'text'", tenantClause, ...filterClauses].join(" AND ");

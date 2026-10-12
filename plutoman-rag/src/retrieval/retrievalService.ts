@@ -19,7 +19,8 @@ import { config } from "../config";
 import { buildSearchKey, cacheGetJSON, cacheSetJSON } from "../cache";
 import { rateLimit, recordUsage, getUsage, approxTokens } from "../rateLimit";
 import { enqueueIngest } from "../ingestion/queue";
-import { hybridSearch, rerank, RetrievalFilters } from "./hybrid";
+import { RetrievalFilters } from "./hybrid";
+import { retrieve } from "./retrieve";
 import { generateAnswer } from "./generate";
 import { condenseQuery } from "./condense";
 import { resolveEntities, resolveChatEntities } from "./entities";
@@ -202,18 +203,17 @@ router.post("/search", requireAuth, rateLimit, asyncRoute(async (req: Request, r
   //    type) into hard filters, then hybrid retrieval (RLS-scoped to tenant
   //    inside hybridSearch). The resolution is deterministic for a given query
   //    and catalog, and ingest invalidates both, so the cache key stays valid.
+  //    Questions asking for a list / count / comparison / the failures / the
+  //    lot's decision also get every matching item (eval change 4).
   const resolved = await resolveEntities(tenantId, query);
-  const rawHits = await hybridSearch(tenantId, query, {
+  const { hits, facts } = await retrieve(tenantId, query, {
     topN: topK ?? 10,
     filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
   });
 
-  // 2) Reranking hook (identity no-op in Phase-1).
-  const hits = await rerank(query, rawHits);
-
   // 3) Optional grounded generation.
   const generation = generate
-    ? await generateAnswer(query, hits)
+    ? await generateAnswer(query, hits, [], facts)
     : { answer: null, citations: hits.map((h) => h.citation) };
 
   // 4) Audit the request (RLS-scoped write). This is a WRITE, so it MUST go to
@@ -239,6 +239,8 @@ router.post("/search", requireAuth, rateLimit, asyncRoute(async (req: Request, r
     results: hits,
     // Which reports the question was narrowed to (empty object = no narrowing).
     appliedFilters: resolved.applied,
+    // Complete lists used for this question (eval change 4) — for transparency and testing.
+    aggregation: facts.map((f) => ({ heading: f.heading, counts: f.counts, listed: f.items.length })),
   };
 
   // 5) Populate the cache on a miss. `cached: true` is added only when SERVING
@@ -313,19 +315,16 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
   //    plus the rewrite unless the message is contrastive ("the OTHER Finolex
   //    job") — then hybrid retrieval (RLS-scoped) on the rewritten query.
   const resolved = await resolveChatEntities(tenantId, message, searchQuery);
-  const rawHits = await hybridSearch(tenantId, searchQuery, {
+  const { hits, facts } = await retrieve(tenantId, searchQuery, {
     topN: topK ?? 8,
     filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
   });
-
-  // 5) Reranking hook (identity no-op in Phase-1).
-  const hits = await rerank(searchQuery, rawHits);
 
   // 6) Grounded generation. The ORIGINAL user `message` is the question; history
   //    is passed only for conversational coherence (see generateAnswer's
   //    grounding invariant) — answers stay grounded in the retrieved context.
   const generation = generate
-    ? await generateAnswer(message, hits, history)
+    ? await generateAnswer(message, hits, history, facts)
     : { answer: null as string | null, citations: hits.map((h) => h.citation) };
 
   // 7) Persist both turns (user first, then assistant) so the next turn has
@@ -364,6 +363,7 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
     results: hits,
     rewrittenQuery: searchQuery,
     appliedFilters: resolved.applied,
+    aggregation: facts.map((f) => ({ heading: f.heading, counts: f.counts, listed: f.items.length })),
   });
 }));
 
