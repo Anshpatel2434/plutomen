@@ -205,6 +205,23 @@ export function findProblems(v: VerifyInput): string[] {
     }
   }
 
+  // 8) A decision that contradicts the report's own records (golden scenario
+  //    19): both sides, and no plain yes / no.
+  for (const f of v.facts) {
+    if (!f.conflict) continue;
+    const listed = f.items.filter((it) => markerOf.has(it.hitId));
+    if (!listed.some((it) => citedIds.has(it.hitId))) {
+      problems.push(
+        "The report's decision is contradicted by its own records: " +
+          listed.slice(0, 4).map((it) => `[${markerOf.get(it.hitId)}] ${it.label}`).join("; ") +
+          ". Report these as well as the decision, with markers, and say the report does not resolve it."
+      );
+    }
+    if (/^\s*(yes|no)\b/i.test(v.draft)) {
+      problems.push("The report conflicts, so do not open with a plain yes or no; give both sides.");
+    }
+  }
+
   // 7) An observation in the same report about the item asked (rule 7: a
   //    note can point the other way, Q35) must not be ignored.
   for (const f of v.facts) {

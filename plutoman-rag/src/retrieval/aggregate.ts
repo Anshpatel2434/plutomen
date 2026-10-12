@@ -338,6 +338,8 @@ export const MAX_AGGREGATE_HITS = 20;
 const MAX_NARROW_REPORTS = 2;
 /** Up to this many reports, check which one the question's details name. */
 const MAX_PICK_REPORTS = 4;
+/** Conflicting records listed for a decision question, at most. */
+const MAX_CONFLICT_ITEMS = 6;
 
 /** True when entities.ts narrowed the question to particular reports. */
 function isScoped(f: RetrievalFilters): boolean {
@@ -534,6 +536,37 @@ export async function expandAggregation(
             })),
           },
           own
+        );
+
+        // A decision that lets the lot go while the same report records
+        // failures is a conflict the answer must not settle (golden scenario
+        // 19). Without such failures a "yes, with this caveat" stays fine.
+        const letsGo = own.some(
+          (r) => (r.question === "Declaration" || r.question === "Technical Clearance") && r.verdict === "OK"
+        );
+        if (!letsGo) continue;
+        const docId = own[0].document_id;
+        const failures = await select(
+          (bind) =>
+            `document_id = ${bind(docId)}::uuid AND (
+               (verdict = 'NOT OK' AND (section_path LIKE 'Characteristics > %' OR section_path LIKE 'Inspection Conclusion%'))
+               OR (section_path LIKE 'Inspection Observations%' AND answer ~* ${bind("^\\s*(major|critical)")})
+             )`
+        );
+        if (failures.length === 0) continue;
+        const shown = failures.slice(0, MAX_CONFLICT_ITEMS);
+        add(
+          {
+            heading: `Records in ${reportName(own[0])} that did not pass (${failures.length} in total)`,
+            counts: countsOf(failures),
+            nonPassOnly: false,
+            conflict: true,
+            items: shown.map((r) => ({
+              hitId: r.id,
+              label: `${r.section_path}: ${valueText(r)}`,
+            })),
+          },
+          shown
         );
       }
     }

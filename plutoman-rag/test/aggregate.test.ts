@@ -115,8 +115,13 @@ test("decision question: the whole Inspection Conclusion of the named report (Q3
   const r = await aggregateFor(T, "Was the Finolex lot for job PH2026100004 cleared for dispatch?", {
     jobIds: ["PH2026100004"],
   });
-  assert.equal(r.facts.length, 1);
-  assert.deepEqual(r.hits.map((h) => h.question).sort(), ["Declaration", "Technical Clearance", "Test Results"]);
+  const conclusion = r.facts.find((f) => /lot's decision/.test(f.heading));
+  assert.ok(conclusion);
+  const ids = new Set(conclusion.items.map((it) => it.hitId));
+  assert.deepEqual(
+    r.hits.filter((h) => ids.has(h.id)).map((h) => h.question).sort(),
+    ["Declaration", "Technical Clearance", "Test Results"]
+  );
   assert.ok(r.hits.every((h) => h.jobId === "PH2026100004"));
 });
 
@@ -146,6 +151,21 @@ test("renderFacts: exact tally and one line per item with its marker", async () 
   const lines = renderFacts(r.facts, r.hits);
   assert.match(lines[1], /15 item\(s\): 13 passed, 2 did not pass \(1 failed, 1 conditional/);
   assert.equal(lines.filter((l) => /\[S\d+\]$/.test(l)).length, 2);
+});
+
+test("decision vs the report's own failures is a conflict (Q36), a clean clearance is not (Q31)", async () => {
+  const q36 = await aggregateFor(T, "Was the Finolex lot for job PH2026100004 cleared for dispatch?", {
+    jobIds: ["PH2026100004"],
+  });
+  const conflict = q36.facts.find((f) => f.conflict);
+  assert.ok(conflict, "conflict list present");
+  const labels = conflict.items.map((it) => it.label).join(" | ");
+  for (const x of [/Ovality/, /Conductor Resistance/, /Hot Set/, /Zinc/, /Major/, /Critical/]) assert.match(labels, x);
+  const q31 = await aggregateFor(T, "Why was the L&T mini pillar lot rejected?", {
+    vendors: ["Larsen & Toubro Ltd. (Electrical & Automation)"],
+    reportTypes: ["LT_Mini_Pillar"],
+  });
+  assert.equal(q31.facts.some((f) => f.conflict), false);
 });
 
 after(async () => {

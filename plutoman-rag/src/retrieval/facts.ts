@@ -22,6 +22,11 @@ export interface AggregateFact {
    * engineer's name, "5 drums", a batch number). Absent for other lists.
    */
   pick?: { valuesDiffer: boolean; singledOut: string[] };
+  /**
+   * The report's decision says the lot can go, but these records of the same
+   * report failed: the answer must give both sides and no plain yes / no.
+   */
+  conflict?: boolean;
 }
 
 /**
@@ -45,6 +50,12 @@ export function renderFacts(facts: AggregateFact[], ordered: RetrievalHit[]): st
     for (const it of f.items) {
       const m = markerOf.get(it.hitId);
       if (m) lines.push(`    * ${it.related ? "Related observation in the same report: " : ""}${it.label} [${m}]`);
+    }
+    if (f.conflict) {
+      lines.push(
+        "    (These records contradict the report's decision above: report both the decision and these " +
+          "records, say the report does not resolve it, and do not answer with a plain yes or no.)"
+      );
     }
     if (f.pick?.singledOut.length) {
       const ms = f.pick.singledOut.map((id) => markerOf.get(id)).filter(Boolean);

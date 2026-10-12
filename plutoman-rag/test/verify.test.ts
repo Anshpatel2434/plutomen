@@ -161,3 +161,23 @@ test("Q06: the question names one report -> other reports' values are flagged", 
   assert.ok(p.some((x) => /leave out the other reports' values \(\[S1\]\)/.test(x)));
   assert.deepEqual(problems("Lot offered as 5 drums: shape?", "Sector shaped [S2].", [a, b], facts), []);
 });
+
+test("Q36: a conflicting decision needs both sides and no plain yes/no", () => {
+  const decl = hit("n1", "Declaration", "Lot is cleared for dispatch.", "OK");
+  const fail = hit("n2", "Hot Set Test on Insulation", "Permanent set 18% – out of limit; hot set fail", "NOT OK");
+  const facts: AggregateFact[] = [{
+    heading: "Records in Report X that did not pass (1 in total)",
+    counts: { total: 1, passed: 0, failed: 1, conditional: 0, noResult: 0 },
+    nonPassOnly: false, conflict: true,
+    items: [{ hitId: "n2", label: "Hot Set: Permanent set 18% – out of limit; hot set fail" }],
+  }];
+  const p = problems("Cleared for dispatch?", "Yes, the lot was cleared for dispatch [S1].", [decl, fail], facts);
+  assert.ok(p.some((x) => /contradicted by its own records: \[S2\]/.test(x)));
+  assert.ok(p.some((x) => /do not open with a plain yes or no/.test(x)));
+  const ok = problems(
+    "Cleared for dispatch?",
+    "The Declaration says it is cleared for dispatch [S1], but the hot set test failed (Permanent set 18% – out of limit; hot set fail) [S2]; the report does not resolve this.",
+    [decl, fail], facts
+  );
+  assert.deepEqual(ok.filter((x) => /contradicted|plain yes/.test(x)), []);
+});
