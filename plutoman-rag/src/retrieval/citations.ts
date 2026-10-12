@@ -41,13 +41,33 @@ export function sourceLabel(c: Citation): string {
 export const marker = (i: number): string => `S${i + 1}`;
 
 /**
- * A bracketed group that contains only source markers and separators:
- * "[S1]", "[S1, S3]", "[S1; S2]", "[S1 and S4]", "[Source 2]". Anything else in
- * square brackets (e.g. "[note]") is left untouched.
+ * A bracketed group that contains only source markers, ranges and separators:
+ * "[S1]", "[S1, S3]", "[S1; S2]", "[S1 and S4]", "[Source 2]", "[S1-S10]",
+ * "[S2 to S4]". Anything else in square brackets (e.g. "[note]") is left
+ * untouched.
  */
-const MARKER_GROUP =
-  /\[\s*(?:S(?:ource)?\s*\d+)(?:\s*(?:,|;|&|and)?\s*S(?:ource)?\s*\d+)*\s*\]/gi;
-const MARKER_NUMBER = /S(?:ource)?\s*(\d+)/gi;
+const MARKER_ITEM = String.raw`S(?:ource)?\s*\d+(?:\s*(?:-|–|—|to)\s*(?:S(?:ource)?\s*)?\d+)?`;
+const MARKER_GROUP = new RegExp(
+  String.raw`\[\s*${MARKER_ITEM}(?:\s*(?:,|;|&|and)?\s*${MARKER_ITEM})*\s*\]`,
+  "gi"
+);
+/** One marker or range: group 1 = first number, group 2 = range end (if any). */
+const MARKER_NUMBER =
+  /S(?:ource)?\s*(\d+)(?:\s*(?:-|–|—|to)\s*(?:S(?:ource)?\s*)?(\d+))?/gi;
+
+/**
+ * 0-based source indices named by one marker or range ("S3" or "S1-S10"),
+ * limited to the `count` sources that exist (so "[S1-S9999]" cannot loop).
+ */
+function markerIndices(m: RegExpMatchArray, count: number): number[] {
+  const from = Number(m[1]);
+  const to = m[2] === undefined ? from : Number(m[2]);
+  const out: number[] = [];
+  for (let n = Math.max(1, Math.min(from, to)); n <= Math.min(count, Math.max(from, to)); n++) {
+    out.push(n - 1);
+  }
+  return out;
+}
 
 export interface RenderedAnswer {
   /** Answer with markers replaced by readable source labels. */
@@ -62,11 +82,12 @@ export function renderCitations(answer: string, hits: RetrievalHit[]): RenderedA
   const text = answer.replace(MARKER_GROUP, (group) => {
     const labels: string[] = [];
     for (const m of group.matchAll(MARKER_NUMBER)) {
-      const i = Number(m[1]) - 1;
-      if (i < 0 || i >= hits.length) continue; // points at no source: drop it
-      if (!cited.includes(i)) cited.push(i);
-      const label = sourceLabel(hits[i].citation);
-      if (!labels.includes(label)) labels.push(label);
+      // Indices outside the sources are dropped (never rendered as a citation).
+      for (const i of markerIndices(m, hits.length)) {
+        if (!cited.includes(i)) cited.push(i);
+        const label = sourceLabel(hits[i].citation);
+        if (!labels.includes(label)) labels.push(label);
+      }
     }
     return labels.length > 0 ? `[${labels.join("; ")}]` : "";
   });

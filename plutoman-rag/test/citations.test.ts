@@ -69,3 +69,22 @@ test("an answer with no markers cites nothing (the old code cited everything)", 
 test("other bracketed text is left alone", () => {
   assert.equal(renderCitations("See [note] here [S2]", HITS).text, "See [note] here [POID-4552466107.pdf p.7]");
 });
+
+test("a marker range cites every source in it: [S1-S3], [S1–S2], [S2 to S3]", () => {
+  const r = renderCitations("Nothing was marked Not Ok [S1-S3].", HITS);
+  assert.deepEqual(r.cited, [0, 1, 2]);
+  assert.equal(
+    r.text,
+    "Nothing was marked Not Ok [POID-4547081947.pdf p.2; POID-4552466107.pdf p.7; POID-4547081947.pdf p.6]."
+  );
+  assert.deepEqual(renderCitations("x [S1–S2]", HITS).cited, [0, 1]);
+  assert.deepEqual(renderCitations("x [S2 to S3]", HITS).cited, [1, 2]);
+  assert.deepEqual(renderCitations("x [S3-S1]", HITS).cited, [0, 1, 2]);
+});
+
+test("a range past the last source is clamped; one wholly outside is dropped", () => {
+  assert.deepEqual(renderCitations("x [S2-S9999]", HITS).cited, [1, 2]);
+  const out = renderCitations("x [S7-S9].", HITS);
+  assert.deepEqual(out.cited, []);
+  assert.equal(out.text, "x.");
+});
