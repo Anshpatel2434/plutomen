@@ -9,6 +9,7 @@
  */
 import { hybridSearch, rerank, RetrievalFilters, RetrievalHit } from "./hybrid";
 import { aggregateFor, AggregateFact, AggregationPlan } from "./aggregate";
+import { oneCopyOfTemplates } from "./templates";
 
 /** Sources handed to generation, at most (~70 tokens each). */
 export const MAX_SOURCES = 24;
@@ -34,5 +35,5 @@ export async function retrieve(
     if (hits.length >= Math.max(MAX_SOURCES, agg.hits.length)) break;
     if (!hits.some((x) => x.id === h.id)) hits.push(h);
   }
-  return { hits, facts: agg.facts, plan: agg.plan };
+  return { hits: oneCopyOfTemplates(hits), facts: agg.facts, plan: agg.plan };
 }
