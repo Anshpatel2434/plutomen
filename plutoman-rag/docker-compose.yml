@@ -25,6 +25,7 @@ x-app-env: &app-env
   JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
   CACHE_ENABLED: ${CACHE_ENABLED:-true}
   KW_MIN_MATCH_SHARE: ${KW_MIN_MATCH_SHARE:-0.4}
+  VERIFY_ANSWERS: ${VERIFY_ANSWERS:-true}
   # Test stack only: lets the demo UI mint tokens via POST /dev/token.
   # Never enable on anything reachable from outside.
   DEV_MODE: ${DEV_MODE:-true}

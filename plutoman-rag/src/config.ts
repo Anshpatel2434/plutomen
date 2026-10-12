@@ -35,6 +35,14 @@ const ConfigSchema = z.object({
   // contain to count as a keyword match. See src/retrieval/keywords.ts.
   KW_MIN_MATCH_SHARE: z.coerce.number().min(0).max(1).default(0.4),
 
+  // --- Answer check (eval change 9) ----------------------------------------
+  // Check each generated answer against its sources and retry once with the
+  // problems found (see src/retrieval/verify.ts). "false" turns it off.
+  VERIFY_ANSWERS: z
+    .enum(["true", "false", "1", "0"])
+    .default("true")
+    .transform((v) => v === "true" || v === "1"),
+
   // --- Phase-3: JWT hardening ---------------------------------------------
   // Optional issuer/audience validation. When set, jwt.verify enforces the
   // `iss` / `aud` claims; when unset, the check is skipped (HS256 default).

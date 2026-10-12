@@ -47,10 +47,16 @@ export const marker = (i: number): string => `S${i + 1}`;
  * untouched.
  */
 const MARKER_ITEM = String.raw`S(?:ource)?\s*\d+(?:\s*(?:-|–|—|to)\s*(?:S(?:ource)?\s*)?\d+)?`;
+/** Separator between markers in one group: ",", ";", "&", "and", ", and". */
+const MARKER_SEP = String.raw`(?:,\s*and|,|;|&|and)?`;
 const MARKER_GROUP = new RegExp(
-  String.raw`\[\s*${MARKER_ITEM}(?:\s*(?:,|;|&|and)?\s*${MARKER_ITEM})*\s*\]`,
+  String.raw`\[\s*${MARKER_ITEM}(?:\s*${MARKER_SEP}\s*${MARKER_ITEM})*\s*\]`,
   "gi"
 );
+/** Markers written in prose instead of brackets: "(S5)", "sources S1, S3 and S10". */
+const MARKER_LIST = String.raw`S\d+(?:\s*(?:-|–|—|to)\s*S?\d+)?(?:\s*${MARKER_SEP}\s*S\d+(?:\s*(?:-|–|—|to)\s*S?\d+)?)*`;
+const PAREN_MARKERS = new RegExp(String.raw`\(\s*(${MARKER_LIST})\s*\)`, "g");
+const PROSE_MARKERS = new RegExp(String.raw`\b(sources?)\s+(${MARKER_LIST})\b`, "gi");
 /** One marker or range: group 1 = first number, group 2 = range end (if any). */
 const MARKER_NUMBER =
   /S(?:ource)?\s*(\d+)(?:\s*(?:-|–|—|to)\s*(?:S(?:ource)?\s*)?(\d+))?/gi;
@@ -79,7 +85,12 @@ export interface RenderedAnswer {
 /** Replace markers with labels and collect which sources were cited. */
 export function renderCitations(answer: string, hits: RetrievalHit[]): RenderedAnswer {
   const cited: number[] = [];
-  const text = answer.replace(MARKER_GROUP, (group) => {
+  // Bracket markers the model wrote in prose, so they are cited (and never
+  // leak to the user as raw "S3" text).
+  const bracketed = answer
+    .replace(PAREN_MARKERS, (_m, list: string) => `[${list}]`)
+    .replace(PROSE_MARKERS, (_m, word: string, list: string) => `${word} [${list}]`);
+  const text = bracketed.replace(MARKER_GROUP, (group) => {
     const labels: string[] = [];
     for (const m of group.matchAll(MARKER_NUMBER)) {
       // Indices outside the sources are dropped (never rendered as a citation).

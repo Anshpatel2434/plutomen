@@ -88,3 +88,14 @@ test("a range past the last source is clamped; one wholly outside is dropped", (
   assert.deepEqual(out.cited, []);
   assert.equal(out.text, "x.");
 });
+
+test("markers written in prose become citations: (S2), sources S1, S3, and S2", () => {
+  const a = renderCitations("Drum length is 500 mtr (S2).", HITS);
+  assert.deepEqual(a.cited, [1]);
+  assert.equal(a.text, "Drum length is 500 mtr [POID-4552466107.pdf p.7].");
+  const b = renderCitations("This is based on sources S1, S3, and S2.", HITS);
+  assert.deepEqual(b.cited, [0, 2, 1]);
+  assert.doesNotMatch(b.text, /\bS\d\b/);
+  // "S1" inside an ordinary word or code is left alone.
+  assert.equal(renderCitations("Grade S355 steel", HITS).text, "Grade S355 steel");
+});

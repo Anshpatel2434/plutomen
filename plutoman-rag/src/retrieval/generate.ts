@@ -15,6 +15,8 @@
 import { RetrievalHit } from "./hybrid";
 import { Citation, sourceLabel, marker, renderCitations, citedSources } from "./citations";
 import { chatComplete } from "../llm";
+import { config } from "../config";
+import { findProblems } from "./verify";
 import { AggregateFact, renderFacts } from "./facts";
 
 // Re-exported for existing importers (conversation.ts, routes).
@@ -25,6 +27,11 @@ export interface GenerationResult {
   answer: string;
   /** Only the sources the answer cites (empty if it cites none). */
   citations: Citation[];
+  /**
+   * Answer check (golden-eval change 9): problems found in the first draft and
+   * whether a corrected answer replaced it. Absent when the check is off.
+   */
+  verification?: { problems: string[]; retried: boolean; remaining: string[] };
 }
 
 /**
@@ -170,10 +177,43 @@ export async function generateAnswer(
 
   const ordered = groupByReport(hits);
   const user = buildUserMessage(query, ordered, history, facts);
-  const raw = await chatComplete({ system: SYSTEM_PROMPT, user });
-  if (leaksInstructions(raw)) return { answer: REFUSAL, citations: [] };
+  const draft = await chatComplete({ system: SYSTEM_PROMPT, user });
+  if (leaksInstructions(draft)) return { answer: REFUSAL, citations: [] };
+
+  const check = (raw: string) =>
+    findProblems({ query, draft: raw, ordered, cited: renderCitations(raw, ordered).cited, facts });
+
+  // Answer check (change 9): one corrective retry, only when the draft has
+  // concrete problems. The retry is kept only if it is no worse.
+  let final = draft;
+  let verification: GenerationResult["verification"];
+  if (config.VERIFY_ANSWERS) {
+    const problems = check(draft);
+    verification = { problems, retried: false, remaining: problems };
+    if (problems.length > 0) {
+      const retry = await chatComplete({
+        system: SYSTEM_PROMPT,
+        user: [
+          user,
+          "",
+          "YOUR DRAFT ANSWER:",
+          draft,
+          "",
+          "PROBLEMS FOUND IN THE DRAFT (fix every one; keep everything that was correct):",
+          ...problems.map((p) => `- ${p}`),
+          "",
+          "Write the corrected answer only.",
+        ].join("\n"),
+      });
+      const remaining = leaksInstructions(retry) ? null : check(retry);
+      if (remaining && remaining.length <= problems.length) {
+        final = retry;
+        verification = { problems, retried: true, remaining };
+      }
+    }
+  }
 
   // Citations = the sources the answer actually cites; markers become labels.
-  const { text, cited } = renderCitations(raw, ordered);
-  return { answer: text, citations: citedSources(ordered, cited) };
+  const { text, cited } = renderCitations(final, ordered);
+  return { answer: text, citations: citedSources(ordered, cited), verification };
 }

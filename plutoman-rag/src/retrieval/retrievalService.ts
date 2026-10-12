@@ -211,10 +211,11 @@ router.post("/search", requireAuth, rateLimit, asyncRoute(async (req: Request, r
     filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
   });
 
-  // 3) Optional grounded generation.
+  // 3) Optional grounded generation (answers are checked against their
+  //    sources, eval change 9).
   const generation = generate
     ? await generateAnswer(query, hits, [], facts)
-    : { answer: null, citations: hits.map((h) => h.citation) };
+    : { answer: null, citations: hits.map((h) => h.citation), verification: undefined };
 
   // 4) Audit the request (RLS-scoped write). This is a WRITE, so it MUST go to
   //    the PRIMARY via withTenant() — never the read-only replica path (see
@@ -239,8 +240,10 @@ router.post("/search", requireAuth, rateLimit, asyncRoute(async (req: Request, r
     results: hits,
     // Which reports the question was narrowed to (empty object = no narrowing).
     appliedFilters: resolved.applied,
-    // Complete lists used for this question (eval change 4) — for transparency and testing.
+    // Complete lists used for this question (eval change 4), and what the
+    // answer check found (eval change 9) — for transparency and testing.
     aggregation: facts.map((f) => ({ heading: f.heading, counts: f.counts, listed: f.items.length })),
+    verification: generation.verification,
   };
 
   // 5) Populate the cache on a miss. `cached: true` is added only when SERVING
@@ -325,7 +328,7 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
   //    grounding invariant) — answers stay grounded in the retrieved context.
   const generation = generate
     ? await generateAnswer(message, hits, history, facts)
-    : { answer: null as string | null, citations: hits.map((h) => h.citation) };
+    : { answer: null as string | null, citations: hits.map((h) => h.citation), verification: undefined };
 
   // 7) Persist both turns (user first, then assistant) so the next turn has
   //    context. Writes go to the primary via appendMessage -> withTenant.
@@ -364,6 +367,7 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
     rewrittenQuery: searchQuery,
     appliedFilters: resolved.applied,
     aggregation: facts.map((f) => ({ heading: f.heading, counts: f.counts, listed: f.items.length })),
+    verification: generation.verification,
   });
 }));
 
