@@ -93,7 +93,10 @@
             <span *ngIf="r.site">· {{ r.site }}</span>
           </div>
           <div class="src-content">{{ r.content }}</div>
-          <div class="src-cite">[{{ shortSop(r.sopId) }}]</div>
+          <div class="src-cite">
+            [{{ sourceRef(r) }}]
+            <span class="cited-tag" *ngIf="isCited(r)">cited in answer</span>
+          </div>
         </div>
       </div>
     </aside>

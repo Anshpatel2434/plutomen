@@ -11,7 +11,7 @@ interface TenantOption {
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
-  citations?: { sopId: string; sectionPath: string | null }[];
+  citations?: { sopId: string; sectionPath: string | null; poid?: string | null; page?: string | null }[];
   results?: RetrievalHit[];
   pending?: boolean;
 }
@@ -165,6 +165,29 @@ export class AppComponent implements OnInit {
     }
     if (last < text.length) parts.push({ text: text.slice(last), cite: false });
     return parts;
+  }
+
+  /**
+   * A source in the golden set's citation form: "POID-4547081947.pdf p.6"
+   * (document + printed page). Falls back to the source id when the report
+   * was ingested without its PDF twin.
+   */
+  sourceRef(r: RetrievalHit): string {
+    if (!r.poid) return this.shortSop(r.sopId);
+    return r.page ? `${r.poid}.pdf p.${r.page}` : `${r.poid}.pdf`;
+  }
+
+  /** Whether the latest answer cites this source (a wrong-document citation is a fail). */
+  isCited(r: RetrievalHit): boolean {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i];
+      if (m.role === 'assistant' && m.results) {
+        return (m.citations ?? []).some(
+          (c) => c.poid === r.poid && c.page === r.page && c.sectionPath === r.sectionPath
+        );
+      }
+    }
+    return false;
   }
 
   shortSop(sop: string): string {

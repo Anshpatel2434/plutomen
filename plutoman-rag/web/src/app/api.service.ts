@@ -26,7 +26,10 @@ export interface RetrievalHit {
   vendor: string | null;
   content: string;
   score: number;
-  citation: { sopId: string; sectionPath: string | null };
+  /** Report identity + printed page (golden set: "POID-….pdf p.N"). */
+  poid?: string | null;
+  page?: string | null;
+  citation: { sopId: string; sectionPath: string | null; poid?: string | null; page?: string | null };
 }
 
 export interface SearchResponse {
@@ -39,7 +42,7 @@ export interface SearchResponse {
 export interface ChatResponse {
   conversationId: string;
   answer: string | null;
-  citations: { sopId: string; sectionPath: string | null }[];
+  citations: { sopId: string; sectionPath: string | null; poid?: string | null; page?: string | null }[];
   results: RetrievalHit[];
   rewrittenQuery?: string;
 }
