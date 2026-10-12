@@ -48,6 +48,11 @@ services:
       - "max_replication_slots=10"
       - "-c"
       - "hot_standby=on"
+      # The replica streams through a replication slot, so the primary keeps the
+      # WAL it still needs. Capped, so a replica left stopped cannot fill the
+      # disk (past the cap it must be re-cloned; see README).
+      - "-c"
+      - "max_slot_wal_keep_size=1GB"
     environment:
       POSTGRES_DB: plutoman
       POSTGRES_USER: plutoman_owner
@@ -126,9 +131,13 @@ services:
   # replica fails to come up, see README "read/write split" for the manual
   # pg_basebackup fallback. `$$` escapes `$` so it reaches the container shell
   # (compose would otherwise interpolate it).
+  #
+  # Profile `replica`: started only on request
+  # (`docker compose --profile replica up -d postgres-replica`).
   postgres-replica:
     image: pgvector/pgvector:pg16
     container_name: plutoman-postgres-replica
+    profiles: ["replica"]
     environment:
       # Used by the postgres entrypoint; PGDATA is already set by the image.
       POSTGRES_PASSWORD: owner_password
@@ -145,8 +154,12 @@ services:
           mkdir -p "$$PGDATA"
           chown postgres:postgres "$$PGDATA"
           chmod 0700 "$$PGDATA"
-          PGPASSWORD=replicator_password gosu postgres pg_basebackup \
-            -h postgres -p 5432 -U replicator -D "$$PGDATA" -Fp -Xs -P -R
+          clone() {
+            PGPASSWORD=replicator_password gosu postgres pg_basebackup \
+              -h postgres -p 5432 -U replicator -D "$$PGDATA" -Fp -Xs -P -R "$$@"
+          }
+          # Create the slot on the first clone; on a re-clone it already exists.
+          clone -C -S plutoman_replica || { rm -rf "$$PGDATA"/*; clone -S plutoman_replica; }
           echo "[replica] base backup complete; starting as hot standby."
         else
           echo "[replica] PGDATA already populated; starting as-is."

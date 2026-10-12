@@ -307,8 +307,9 @@ primary. This is the **durable** part; the replica container is best-effort.
 **Optional replica container (`postgres-replica`, host port 5545):**
 
 ```bash
-# Start (or restart) the stack; the replica clones the primary on first boot.
-docker compose up -d postgres postgres-replica
+# The replica has its own profile; it clones the primary on first boot and
+# then streams through the replication slot `plutoman_replica`.
+docker compose --profile replica up -d postgres-replica
 docker compose logs -f postgres-replica   # watch for "starting as hot standby"
 
 # Point the app's reads at the replica (in .env), then restart the API:
@@ -329,6 +330,12 @@ docker compose exec postgres psql -U plutoman_owner -d plutoman \
 > manually (see the header comments in those two files), then start the replica.
 > The replica is **optional** — leave `READ_DATABASE_URL` unset to run entirely
 > on the primary.
+>
+> **Replica stuck on "requested WAL segment … has already been removed"?** It
+> fell further behind than the primary keeps WAL (`max_slot_wal_keep_size`,
+> 1 GB) or was cloned before the slot existed. Its data is only a copy, so
+> re-clone it: `docker compose --profile replica rm -sf postgres-replica`,
+> `docker volume rm plutoman-rag_pgdata_replica`, then start it again.
 
 ## Phase 3 — Isolation Hardening (defense in depth)
 
