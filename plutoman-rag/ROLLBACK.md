@@ -3,6 +3,29 @@
 Branch: `testing/pipeline-docker`. **`main` is not affected by any of this.**
 Current status against the golden set: [GOLDEN_EVAL_STATUS.md](GOLDEN_EVAL_STATUS.md).
 
+## Changes 4 and 9 (complete lists, answer check — no database changes)
+
+| Commit | What it changes |
+|---|---|
+| `312d67a` | **Eval change 9**: answer check + one retry (`verify.ts`), prose markers become citations, `VERIFY_ANSWERS` setting |
+| `b484f45` | **Eval change 4**: complete lists (`aggregate.ts`, `facts.ts`, `retrieve.ts`), rule 12, shared `filterSql` |
+| tag `pre-eval-4-9` (`7dd43a8`) | the state before this round |
+
+No migration, no re-ingest. Verified on 12 Oct 2026: #9 reverts on its own,
+and #4 + #9 together; each compiles. **#4 cannot be reverted without #9**,
+because the answer check uses the list type from #4.
+
+```bash
+git revert --no-edit 312d67a                     # undo #9 only (keeps complete lists)
+git revert --no-edit pre-eval-4-9..HEAD          # undo #4 and #9
+npm run build                                    # or: docker compose --profile app up -d --build
+```
+
+To turn the answer check off without a code change, set `VERIFY_ANSWERS=false`
+(in `.env`, or in the shell for Docker) and restart the API.
+
+---
+
 ## Round 4 (Docker, queue, replica, notes, change 10)
 
 | Commit | What it changes | Index needs re-ingest? |
