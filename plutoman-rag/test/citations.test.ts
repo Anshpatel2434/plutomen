@@ -99,3 +99,15 @@ test("markers written in prose become citations: (S2), sources S1, S3, and S2", 
   // "S1" inside an ordinary word or code is left alone.
   assert.equal(renderCitations("Grade S355 steel", HITS).text, "Grade S355 steel");
 });
+
+test("Q23: '[S1: quoted text, S3]' keeps the quote and cites both sources", () => {
+  const r = renderCitations("One item did not pass [S1: Inspection Conclusion / Test Results: Not Ok, S3].", HITS);
+  assert.deepEqual(r.cited, [0, 2]);
+  assert.equal(
+    r.text,
+    "One item did not pass (Inspection Conclusion / Test Results: Not Ok) [POID-4547081947.pdf p.2; POID-4547081947.pdf p.6]."
+  );
+  assert.doesNotMatch(r.text, /\[S\d/);
+  // An ordinary bracket that merely starts like a marker is left alone.
+  assert.equal(renderCitations("Grade [S355: steel]", HITS).text, "Grade [S355: steel]");
+});

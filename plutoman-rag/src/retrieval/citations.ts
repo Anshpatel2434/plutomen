@@ -57,6 +57,27 @@ const MARKER_GROUP = new RegExp(
 const MARKER_LIST = String.raw`S\d+(?:\s*(?:-|–|—|to)\s*S?\d+)?(?:\s*${MARKER_SEP}\s*S\d+(?:\s*(?:-|–|—|to)\s*S?\d+)?)*`;
 const PAREN_MARKERS = new RegExp(String.raw`\(\s*(${MARKER_LIST})\s*\)`, "g");
 const PROSE_MARKERS = new RegExp(String.raw`\b(sources?)\s+(${MARKER_LIST})\b`, "gi");
+/**
+ * A bracket whose parts each start with a marker, some followed by quoted
+ * text: "[S1: Inspection Conclusion / Test Results: Not Ok, S3]" (golden Q23).
+ * The quoted text is part of the answer, so it is kept, in parentheses, and
+ * the markers become citations.
+ */
+const ANNOTATED_GROUP = /\[\s*(S\d+\s*:[^\]]*)\]/g;
+
+function unannotate(_m: string, inner: string, count: number): string {
+  const parts = inner.split(/[,;]\s*(?=S\d+\b)/);
+  const markers: string[] = [];
+  const texts: string[] = [];
+  for (const part of parts) {
+    const m = /^\s*(S\d+)\s*(?::\s*([\s\S]*))?$/.exec(part);
+    // Not purely marker parts, or a marker that points at no source: leave it.
+    if (!m || Number(m[1].slice(1)) < 1 || Number(m[1].slice(1)) > count) return _m;
+    markers.push(m[1]);
+    if (m[2] && m[2].trim()) texts.push(m[2].trim().replace(/[,;]\s*$/, ""));
+  }
+  return `${texts.length ? `(${texts.join("; ")}) ` : ""}[${markers.join(", ")}]`;
+}
 /** One marker or range: group 1 = first number, group 2 = range end (if any). */
 const MARKER_NUMBER =
   /S(?:ource)?\s*(\d+)(?:\s*(?:-|–|—|to)\s*(?:S(?:ource)?\s*)?(\d+))?/gi;
@@ -88,6 +109,7 @@ export function renderCitations(answer: string, hits: RetrievalHit[]): RenderedA
   // Bracket markers the model wrote in prose, so they are cited (and never
   // leak to the user as raw "S3" text).
   const bracketed = answer
+    .replace(ANNOTATED_GROUP, (m, inner: string) => unannotate(m, inner, hits.length))
     .replace(PAREN_MARKERS, (_m, list: string) => `[${list}]`)
     .replace(PROSE_MARKERS, (_m, word: string, list: string) => `${word} [${list}]`);
   const text = bracketed.replace(MARKER_GROUP, (group) => {
