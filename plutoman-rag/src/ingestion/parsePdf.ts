@@ -42,6 +42,91 @@ export interface ParsedPdf {
   /** Printed page holding the "Inspection details" block (Prepared by / Started on). */
   detailsPage: string | null;
   items: PdfItem[];
+  /**
+   * The "Table of content" page: top-level sections in printed order, each
+   * with its sub-sections. Exists only in the PDF (golden set Q18).
+   */
+  contents: { page: string; sections: { name: string; parts: string[] }[] } | null;
+  /** The footer printed on every page, e.g. "Phoenix | admin@… | +91 …" (Q20). */
+  footer: { page: string; text: string } | null;
+}
+
+/** "Basic Details (Page complete: 100%)" -> top-level section of the contents. */
+const TOC_SECTION = /^(.+?)\s*\(Page complete:[^)]*\)$/;
+/** "Visual & Physical Checks (Inspection Points: 11/11)" -> a sub-section. */
+const TOC_PART = /^(.+?)\s*\(Inspection Points:[^)]*\)$/;
+
+/** Table of contents: the page listing "Inspection details" sections. */
+function parseContents(pages: { num: number; text: string }[]): ParsedPdf["contents"] {
+  for (const pg of pages) {
+    const lines = pg.text.split(/\r?\n/).map((l) => l.trim());
+    const start = lines.findIndex(
+      (l, i) => l === "Table of content" && lines[i + 1] === "Inspection details"
+    );
+    if (start < 0) continue;
+    const sections: { name: string; parts: string[] }[] = [];
+    for (const l of lines.slice(start + 2)) {
+      const sec = TOC_SECTION.exec(l);
+      const part = TOC_PART.exec(l);
+      if (sec) sections.push({ name: sec[1], parts: [] });
+      else if (part && sections.length) sections[sections.length - 1].parts.push(part[1]);
+    }
+    if (sections.length === 0) continue;
+    const printed = /Page (\d+) of \d+/.exec(pg.text);
+    return { page: printed ? printed[1] : "cover", sections };
+  }
+  return null;
+}
+
+/** The footer line ("Phoenix | | admin@phoenix.com | +91 8341030349"), tidied. */
+function parseFooter(pages: { num: number; text: string }[]): ParsedPdf["footer"] {
+  for (const pg of pages) {
+    const line = pg.text.split(/\r?\n/).map((l) => l.trim()).find((l) => /^Phoenix \|/.test(l));
+    const printed = /Page (\d+) of \d+/.exec(pg.text);
+    if (line && printed) {
+      const text = line.split("|").map((p) => p.trim()).filter(Boolean).join(" | ");
+      return { page: printed[1], text };
+    }
+  }
+  return null;
+}
+
+/**
+ * Chunks for content that exists ONLY in the PDF (not in the XLSX twin): the
+ * table of contents and the footer. Returned with their printed pages. They
+ * are not part of the twin check (locateChunks), which compares XLSX items.
+ */
+export function pdfOnlyChunks(
+  pdf: ParsedPdf,
+  prefix: string
+): { chunks: Chunk[]; pages: string[] } {
+  const chunks: Chunk[] = [];
+  const pages: string[] = [];
+  if (pdf.contents) {
+    const list = pdf.contents.sections
+      .map((s, i) => `${i + 1}. ${s.name}${s.parts.length ? ` (${s.parts.join("; ")})` : ""}`)
+      .join(" ");
+    const answer = pdf.contents.sections.map((s) => s.name).join(" > ");
+    chunks.push({
+      sectionPath: "Report Contents",
+      question: "Table of content",
+      answer,
+      verdict: null,
+      content: `${prefix}Report contents (table of content) — sections in order: ${list}`,
+    });
+    pages.push(pdf.contents.page);
+  }
+  if (pdf.footer) {
+    chunks.push({
+      sectionPath: "Report Footer",
+      question: "Footer",
+      answer: pdf.footer.text,
+      verdict: null,
+      content: `${prefix}Report footer (printed on every page; contact details): ${pdf.footer.text}`,
+    });
+    pages.push(pdf.footer.page);
+  }
+  return { chunks, pages };
 }
 
 interface Line {
@@ -183,7 +268,14 @@ export async function parsePdfBuffer(buffer: Buffer): Promise<ParsedPdf> {
   const lines = toLines(pages);
   const detailsPage = lines.find((l) => l.text === "Started on")?.page ?? null;
 
-  return { poid, jobId, detailsPage, items: parseItems(lines) };
+  return {
+    poid,
+    jobId,
+    detailsPage,
+    items: parseItems(lines),
+    contents: parseContents(pages),
+    footer: parseFooter(pages),
+  };
 }
 
 /** Render an item's pages as a citation label: "4", "2-3", "cover". */

@@ -148,7 +148,7 @@ export interface ReportIds {
  * both keyword search and embeddings — users ask "who is the vendor for job
  * PH2026100008?" or type "ph2026100001" (golden set Q01, Q25).
  */
-function tag(meta: ReportMetadata, ids: ReportIds = {}): string {
+export function tag(meta: ReportMetadata, ids: ReportIds = {}): string {
   const parts = [ids.poid, ids.jobId ? `Job ${ids.jobId}` : null, meta.vendor, meta.site].filter(
     Boolean
   );

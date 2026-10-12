@@ -12,7 +12,13 @@ import { readFile } from "fs/promises";
 import { resolve } from "path";
 import { parseWorkbookBuffer } from "../src/ingestion/parseXlsx";
 import { chunkReport } from "../src/ingestion/chunk";
-import { parsePdfBuffer, locateChunks, norm, TWIN_MATCH_THRESHOLD } from "../src/ingestion/parsePdf";
+import {
+  parsePdfBuffer,
+  locateChunks,
+  pdfOnlyChunks,
+  norm,
+  TWIN_MATCH_THRESHOLD,
+} from "../src/ingestion/parsePdf";
 
 const DEMO = resolve(__dirname, "..", "..", "demo_data");
 const load = (f: string) => readFile(resolve(DEMO, f));
@@ -68,4 +74,32 @@ test("chunks are prefixed with POID and Job ID when the twin is known", async ()
   const report = await parseWorkbookBuffer(await load(XLSX));
   const { chunks } = chunkReport(report, { poid: "POID-4523310336", jobId: "PH2026100003" });
   assert.ok(chunks.every((c) => c.content.startsWith("[POID-4523310336 | Job PH2026100003 | ")));
+});
+
+test("table of contents: sections in printed order, on printed page 1 (Q18)", async () => {
+  // POID-4507044338 is the golden source for Q18 (an LT_Mini_Pillar report).
+  const pdf = await parsePdfBuffer(await load("POID-4507044338.pdf"));
+  assert.ok(pdf.contents);
+  assert.equal(pdf.contents.page, "1");
+  assert.deepEqual(
+    pdf.contents.sections.map((s) => s.name),
+    ["Basic Details", "Characteristics _ Parameter", "Inspection Observations", "Inspection Conclusion"]
+  );
+  assert.ok(pdf.contents.sections[1].parts.includes("Acceptance Tests as per QAP/IS"));
+});
+
+test("footer contact details are extracted (Q20)", async () => {
+  const pdf = await parsePdfBuffer(await load(TWIN));
+  assert.ok(pdf.footer);
+  assert.equal(pdf.footer.text, "Phoenix | admin@phoenix.com | +91 8341030349");
+});
+
+test("PDF-only chunks: contents + footer, with pages and the report prefix", async () => {
+  const pdf = await parsePdfBuffer(await load(TWIN));
+  const { chunks, pages } = pdfOnlyChunks(pdf, "[POID-4523310336 | Job PH2026100003] ");
+  assert.deepEqual(chunks.map((c) => c.sectionPath), ["Report Contents", "Report Footer"]);
+  assert.equal(pages.length, 2);
+  assert.match(chunks[0].content, /^\[POID-4523310336 \| Job PH2026100003\] Report contents .*1\. Basic Details/);
+  assert.match(chunks[1].content, /admin@phoenix\.com \| \+91 8341030349/);
+  assert.ok(chunks.every((c) => c.verdict === null));
 });

@@ -23,8 +23,14 @@ import { withTenant } from "../db";
 import { cacheClient, invalidateTenant } from "../cache";
 import { embed, EMBED_MODEL, EMBED_VERSION, toVectorLiteral } from "../embeddings";
 import { parseWorkbookBuffer } from "./parseXlsx";
-import { chunkReport } from "./chunk";
-import { parsePdfBuffer, locateChunks, ParsedPdf, TWIN_MATCH_THRESHOLD } from "./parsePdf";
+import { chunkReport, tag } from "./chunk";
+import {
+  parsePdfBuffer,
+  locateChunks,
+  pdfOnlyChunks,
+  ParsedPdf,
+  TWIN_MATCH_THRESHOLD,
+} from "./parsePdf";
 import {
   INGEST_QUEUE_NAME,
   IngestJobData,
@@ -94,11 +100,12 @@ export async function ingestUpsert(
   // Optional PDF twin -> POID, Job ID and the printed page of every chunk.
   const pdf = await loadPdf(data);
   const ids = pdf ? { poid: pdf.poid, jobId: pdf.jobId } : {};
-  const { metadata, chunks } = chunkReport(report, ids);
+  const { metadata, chunks: xlsxChunks } = chunkReport(report, ids);
+  const chunks = [...xlsxChunks];
 
   let pages: (string | null)[] = chunks.map(() => null);
   if (pdf) {
-    const loc = locateChunks(pdf, chunks);
+    const loc = locateChunks(pdf, xlsxChunks);
     // Refuse a mismatched pair: attaching the wrong POID would make every
     // citation point at the wrong document (a scored fail), which is worse
     // than having no POID at all. Fail loudly so the job is visible/retryable.
@@ -109,6 +116,10 @@ export async function ingestUpsert(
       );
     }
     pages = loc.pages;
+    // Table of contents + footer: only in the PDF, so added after the twin check.
+    const extra = pdfOnlyChunks(pdf, tag(metadata, ids));
+    chunks.push(...extra.chunks);
+    pages = [...pages, ...extra.pages];
   }
 
   // Embed all chunk contents in one batched call (documents task prefix).
