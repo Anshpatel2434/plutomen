@@ -64,6 +64,8 @@ const PROSE_MARKERS = new RegExp(String.raw`\b(sources?)\s+(${MARKER_LIST})\b`, 
  * the markers become citations.
  */
 const ANNOTATED_GROUP = /\[\s*(S\d+\s*:[^\]]*)\]/g;
+/** The opening of a labelled marker list: "[Citations: S1, S2]", "[Sources: S3]". */
+const LABELLED_GROUP = /\[\s*(?:citations?|sources?|refs?|references?)\s*:\s*(?=S(?:ource)?\s*\d)/gi;
 
 function unannotate(_m: string, inner: string, count: number): string {
   const parts = inner.split(/[,;]\s*(?=S\d+\b)/);
@@ -109,6 +111,8 @@ export function renderCitations(answer: string, hits: RetrievalHit[]): RenderedA
   // Bracket markers the model wrote in prose, so they are cited (and never
   // leak to the user as raw "S3" text).
   const bracketed = answer
+    // "[Citations: S1, S2]" / "[Sources: S3]" — a labelled marker list (V14).
+    .replace(LABELLED_GROUP, "[")
     .replace(ANNOTATED_GROUP, (m, inner: string) => unannotate(m, inner, hits.length))
     .replace(PAREN_MARKERS, (_m, list: string) => `[${list}]`)
     .replace(PROSE_MARKERS, (_m, word: string, list: string) => `${word} [${list}]`);
@@ -131,4 +135,95 @@ export function renderCitations(answer: string, hits: RetrievalHit[]): RenderedA
 /** Structured citations for the cited sources (order of first appearance). */
 export function citedSources(hits: RetrievalHit[], cited: number[]): Citation[] {
   return cited.map((i) => hits[i].citation);
+}
+
+// ---------------------------------------------------------------------------
+// Citation repair (golden Q18, Q06)
+// ---------------------------------------------------------------------------
+
+/** Words too common to say anything about which source a statement came from. */
+const STOP = new Set([
+  "with", "that", "this", "from", "were", "have", "been", "which", "their", "there", "these", "those",
+  "they", "what", "when", "where", "into", "also", "each", "only", "than", "then", "same", "other",
+  "report", "reports", "recorded", "record", "following", "contain", "contains", "order", "about",
+]);
+
+function contentWords(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/\[[^\]]*\]/g, " ")
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 4 && !STOP.has(w))
+  );
+}
+
+/** Share of the statement's content words that occur in a source (0..1). */
+function support(words: Set<string>, sourceWords: Set<string>): number {
+  if (words.size === 0) return 0;
+  let n = 0;
+  for (const w of words) if (sourceWords.has(w)) n++;
+  return n / words.size;
+}
+
+/** Below this, a cited source does not support the statement it is attached to. */
+const WEAK_SUPPORT = 0.2;
+/** A replacement must support at least this share of the statement... */
+const STRONG_SUPPORT = 0.5;
+/** ...and at least this many times better than the best source it replaces. */
+const BETTER_BY = 2;
+/** Statements shorter than this (in content words) are left alone. */
+const MIN_WORDS = 5;
+
+/**
+ * Point a citation at the source that actually holds the statement.
+ *
+ * A model can write the right content and cite the wrong sources: golden Q18
+ * listed the report's sections (from the contents page) but cited six
+ * "Report Details" chunks, which say nothing about sections — a wrong-document
+ * citation under the golden set's rules. For each marker group, the text since
+ * the previous group is the statement it cites. When every cited source
+ * supports under WEAK_SUPPORT of that statement's content words and one other
+ * source supports at least STRONG_SUPPORT (and BETTER_BY times more), the
+ * group is replaced by that one source. Conservative on purpose: a citation
+ * with any real support is never touched.
+ */
+export function reattributeCitations(answer: string, hits: RetrievalHit[]): string {
+  const sourceWords = hits.map((h) => contentWords(h.content));
+  let prevEnd = 0;
+  return answer.replace(MARKER_GROUP, (group: string, offset: number) => {
+    const statement = answer.slice(prevEnd, offset);
+    prevEnd = offset + group.length;
+    const words = contentWords(statement);
+    if (words.size < MIN_WORDS) return group;
+    const cited: number[] = [];
+    for (const m of group.matchAll(MARKER_NUMBER)) cited.push(...markerIndices(m, hits.length));
+    if (cited.length === 0) return group;
+    const bestCited = Math.max(...cited.map((i) => support(words, sourceWords[i])));
+    if (bestCited >= WEAK_SUPPORT) return group;
+    let best = -1;
+    let bestScore = 0;
+    sourceWords.forEach((sw, i) => {
+      const s = support(words, sw);
+      if (s > bestScore) {
+        best = i;
+        bestScore = s;
+      }
+    });
+    if (best < 0 || bestScore < STRONG_SUPPORT || bestScore < BETTER_BY * bestCited) return group;
+    return `[${marker(best)}]`;
+  });
+}
+
+/**
+ * Remove brackets that still hold a raw source marker after rendering — the
+ * model's own commentary about sources, e.g. "[S1, S3 do not mention it]"
+ * (golden Q06). A source marker must never reach the user as text.
+ */
+export function stripLeftoverMarkers(text: string): string {
+  return text
+    .replace(/\s*\[[^\][]*\bS(?:ource)?\s*\d+\b[^\][]*\]/g, "")
+    .replace(/[ \t]+([.,;:!?])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }

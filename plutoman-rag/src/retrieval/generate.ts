@@ -13,10 +13,18 @@
  *   itself. A code-level guard blocks any answer that reproduces the rules.
  */
 import { RetrievalHit } from "./hybrid";
-import { Citation, sourceLabel, marker, renderCitations, citedSources } from "./citations";
+import {
+  Citation,
+  sourceLabel,
+  marker,
+  renderCitations,
+  citedSources,
+  reattributeCitations,
+  stripLeftoverMarkers,
+} from "./citations";
 import { chatComplete } from "../llm";
 import { config } from "../config";
-import { findProblems } from "./verify";
+import { findProblems, dropUndefinedExplanations } from "./verify";
 import { AggregateFact, renderFacts } from "./facts";
 
 // Re-exported for existing importers (conversation.ts, routes).
@@ -213,7 +221,11 @@ export async function generateAnswer(
     }
   }
 
+  // Deterministic repairs: no explanation of a term the sources never define
+  // (rule 4), and each citation pointed at the source that holds the statement.
+  final = reattributeCitations(dropUndefinedExplanations(query, final, ordered), ordered);
+
   // Citations = the sources the answer actually cites; markers become labels.
   const { text, cited } = renderCitations(final, ordered);
-  return { answer: text, citations: citedSources(ordered, cited), verification };
+  return { answer: stripLeftoverMarkers(text), citations: citedSources(ordered, cited), verification };
 }

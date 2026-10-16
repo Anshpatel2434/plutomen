@@ -37,6 +37,35 @@ const EXPLAINS = /\b(means|meaning|indicates?|refers? to|signif(y|ies|icant)|den
 /** A source that itself gives a definition. */
 const DEFINES = /\b(means|defined as|stands for|definition)\b/i;
 
+/** A sentence saying the term is NOT defined (kept: that is the right answer). */
+const NOT_DEFINED =
+  /\b(do(es)?\s+not\s+(define|explain|expand|specify)|not\s+(defined|explained|expanded)|no\s+definition|(is|are)\s+not\s+compared|not\s+possible\s+to\s+determine)\b/i;
+/** Guessing at a meaning from general knowledge rather than the sources. */
+const SPECULATES =
+  /\b(appears?\s+to\s+(be|mean|stand|refer)|likely|probably|usually|typically|generally|commonly|presumably|(may|might|could)\s+(be|mean|stand|refer|indicate))\b/i;
+
+/**
+ * Deterministic backstop for rule 4 (golden Q33, Q34). The answer check above
+ * catches a draft that explains a term no source defines and asks for one
+ * retry, but a small model can repeat the explanation in the retry. Here the
+ * explaining sentences are removed from the final answer instead: a sentence
+ * that says the term is not defined is kept, as is one that quotes how the
+ * term is used; a sentence that explains or guesses a meaning is dropped.
+ * Applies only to a definition question whose sources define nothing.
+ */
+export function dropUndefinedExplanations(query: string, answer: string, sources: RetrievalHit[]): string {
+  if (!DEFINITION_Q.test(query) || sources.some((h) => DEFINES.test(h.content))) return answer;
+  const sentences = answer.split(/(?<=[.!?])\s+(?=[A-Z("'\[])/);
+  const kept = sentences.filter((s) => NOT_DEFINED.test(s) || !(EXPLAINS.test(s) || SPECULATES.test(s)));
+  if (kept.length === sentences.length) return answer;
+  if (kept.length === 0) return "The reports do not define this term.";
+  // Whatever survives (quoted usage) must still say the term is undefined.
+  if (!kept.some((s) => NOT_DEFINED.test(s))) kept.unshift("The reports do not define this term.");
+  // The first kept sentence may have followed a dropped one ("However, ...").
+  kept[0] = kept[0].replace(/^(However|But|Also|Therefore),\s+(\w)/, (_m, _w: string, c: string) => c.toUpperCase());
+  return kept.join(" ");
+}
+
 /** Words that carry no value of their own in a recorded answer. */
 const RESULT_WORDS = new Set([
   "ok", "not", "pass", "passed", "fail", "failed", "yes", "no", "the", "and", "of", "a", "an",
