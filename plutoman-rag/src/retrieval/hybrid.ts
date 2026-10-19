@@ -104,16 +104,22 @@ export function filterSql(f: RetrievalFilters, params: unknown[], tenantParam: s
     idClauses.push(`poid = ANY($${params.length}::text[])`);
   }
   if (idClauses.length > 0) filterClauses.push(`(${idClauses.join(" OR ")})`);
+  // Vendor and report-type names narrow the INSPECTION REPORTS. Documents the
+  // user uploaded (PDF / TXT / CSV / MD: procedures, specifications) have no
+  // vendor or report type, and must stay searchable when a question mentions
+  // one ("maximum stacking height for cable drums" names the cable reports).
+  const OR_UPLOADED = `OR source_format IN ('pdf', 'txt', 'csv', 'md')`;
   if (f.vendors && f.vendors.length > 0) {
     params.push(f.vendors);
-    filterClauses.push(`vendor = ANY($${params.length}::text[])`);
+    filterClauses.push(`(vendor = ANY($${params.length}::text[]) ${OR_UPLOADED})`);
   }
   if (f.reportTypes && f.reportTypes.length > 0) {
     params.push(f.reportTypes);
     // documents is RLS-scoped too; the explicit tenant predicate is defense in depth.
     filterClauses.push(
-      `document_id IN (SELECT d.id FROM documents d
-                        WHERE d.tenant_id = ${tenantParam} AND d.title = ANY($${params.length}::text[]))`
+      `(document_id IN (SELECT d.id FROM documents d
+                         WHERE d.tenant_id = ${tenantParam} AND d.title = ANY($${params.length}::text[]))
+        ${OR_UPLOADED})`
     );
   }
   return filterClauses;

@@ -60,6 +60,11 @@ const SECTION_RE = /^(?:section\s+)?(\d{1,2})\s*[.):-]\s*(.+?)\s*$/i;
 // A step heading: dotted number like 4.1 or 4.1.2, a separator, then text.
 const STEP_RE = /^(?:step\s+)?(\d{1,2}(?:\.\d{1,2})+)\s*[.):-]?\s+(.+?)\s*$/i;
 // "SOP-102", "SOP 102", "WI-14" style handles anywhere in the first few lines.
+/** Words a step's text needs (fewer = a figure starting a line, not a step). */
+const MIN_STEP_WORDS = 3;
+/** Steps a document needs to be read as a procedure. */
+const MIN_STEPS = 2;
+
 const DOCREF_RE = /\b((?:SOP|WI|QAP|PROC)[-\s]?\d{1,5})\b/i;
 
 /** Normalize a detected handle to a canonical "SOP-102" shape. */
@@ -116,8 +121,10 @@ export function parseSop(text: string): ParsedSop | null {
 
     // A step must be tested BEFORE a section: "4.1 Verify..." also matches the
     // looser section pattern on its leading "4", and step wins.
+    // A step is an instruction: a "2.1" that heads a few words of text. A bare
+    // figure that merely starts a line ("4.5 s", "13.1 kg") is not a step.
     const stepMatch = STEP_RE.exec(line);
-    if (stepMatch && section) {
+    if (stepMatch && section && stepMatch[2].split(/\s+/).length >= MIN_STEP_WORDS) {
       flushStep();
       step = { stepNo: stepMatch[1], text: stepMatch[2] };
       continue;
@@ -154,6 +161,12 @@ export function parseSop(text: string): ParsedSop | null {
   // the caller should chunk it as such rather than inventing a hierarchy.
   const realSections = sections.filter((s) => s.sectionNo !== "0");
   if (realSections.length === 0) return null;
+  // A procedure is made of steps: at least MIN_STEPS of them, in at least half
+  // of its sections. A report with numbered headings ("1. What was tested") and
+  // no steps is prose, and is chunked as prose rather than as a fake tree.
+  const steps = realSections.reduce((n, s) => n + s.steps.length, 0);
+  const withSteps = realSections.filter((s) => s.steps.length > 0).length;
+  if (steps < MIN_STEPS || withSteps * 2 < realSections.length) return null;
 
   return { docRef, title, sections };
 }
