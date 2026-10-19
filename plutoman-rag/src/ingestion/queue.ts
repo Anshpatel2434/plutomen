@@ -21,7 +21,7 @@ export interface IngestJobData {
   tenantId: string;
   mongoId: string;
   action: "upsert" | "delete";
-  /** For upsert: absolute path to an .xlsx file to parse. */
+  /** For upsert: absolute path to the source file (.xlsx/.pdf/.txt/.csv/.md). */
   fileRef?: string;
   /**
    * For upsert (optional): absolute path to the report's PDF twin. When given,
@@ -29,8 +29,24 @@ export interface IngestJobData {
    * FAILS if the PDF is not the same report as the workbook.
    */
   pdfRef?: string;
-  /** For upsert: inlined payloads (base64), when the adapter shares no filesystem. */
-  parsedPayload?: { xlsxBase64?: string; pdfBase64?: string };
+  /**
+   * For upsert: the source file inlined as base64, when the adapter shares no
+   * filesystem with the worker.
+   *
+   * `filename` matters — it is how the worker picks an ingestion strategy
+   * (workbook vs SOP tree vs prose), so an inline payload must say what it is.
+   * `xlsxBase64` is the Phase-1 field name, kept so existing callers keep
+   * working; new callers should send `fileBase64` + `filename`. `pdfBase64` is
+   * an inline PDF twin of a workbook (see pdfRef).
+   */
+  parsedPayload?: {
+    xlsxBase64?: string;
+    fileBase64?: string;
+    filename?: string;
+    pdfBase64?: string;
+  };
+  /** Set for demo-UI uploads: the worker reports progress to this `uploads` row. */
+  uploadId?: string;
   /**
    * Per-document sequence number, set by enqueueIngest. The worker applies a
    * job only if no newer job for the same document has been enqueued (see
@@ -77,10 +93,16 @@ export function seqKey(tenantId: string, mongoId: string): string {
  * BullMQ silently drop any update of a document whose previous job was still
  * waiting or retained as completed.) Superseded jobs skip themselves in the
  * worker. `|` separates the parts because BullMQ rejects most ids with `:`.
+ *
+ * `opts` overrides job retention — uploads drop their job (which carries the
+ * file bytes) from Redis as soon as it has run.
  */
-export async function enqueueIngest(data: IngestJobData): Promise<string> {
+export async function enqueueIngest(
+  data: IngestJobData,
+  opts: { removeOnComplete?: boolean | number; removeOnFail?: boolean | number } = {}
+): Promise<string> {
   const seq = await producerConnection.incr(seqKey(data.tenantId, data.mongoId));
   const jobId = [data.tenantId, data.mongoId, data.action, seq].join("|");
-  const job = await ingestQueue.add(data.action, { ...data, seq }, { jobId });
+  const job = await ingestQueue.add(data.action, { ...data, seq }, { jobId, ...opts });
   return job.id ?? jobId;
 }

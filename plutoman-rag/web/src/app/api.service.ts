@@ -54,6 +54,22 @@ export interface Usage {
   genTokens: number;
 }
 
+/** A document the user uploaded, with its indexing status. */
+export interface UploadItem {
+  id: string;
+  filename: string;
+  sizeBytes: number;
+  status: 'queued' | 'processing' | 'ready' | 'failed';
+  error: string | null;
+  chunkCount: number | null;
+}
+
+export interface UploadLimits {
+  maxMb: number;
+  maxFiles: number;
+  extensions: string[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class ApiService {
   constructor(private http: HttpClient) {}
@@ -106,6 +122,41 @@ export class ApiService {
   async usage(token: string): Promise<Usage> {
     return firstValueFrom(
       this.http.get<Usage>(`${API_BASE}/usage`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+    );
+  }
+
+  async listUploads(token: string): Promise<{ uploads: UploadItem[]; limits: UploadLimits }> {
+    return firstValueFrom(
+      this.http.get<{ uploads: UploadItem[]; limits: UploadLimits }>(`${API_BASE}/uploads`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+    );
+  }
+
+  /** Upload one file; the API indexes it in the background. */
+  async uploadFile(token: string, file: File): Promise<UploadItem> {
+    const fileBase64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      // readAsDataURL yields "data:<type>;base64,<payload>" — keep the payload.
+      reader.onload = () => resolve(String(reader.result).split(',', 2)[1] ?? '');
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    const res = await firstValueFrom(
+      this.http.post<{ upload: UploadItem }>(
+        `${API_BASE}/uploads`,
+        { filename: file.name, fileBase64 },
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+    );
+    return res.upload;
+  }
+
+  async deleteUpload(token: string, id: string): Promise<void> {
+    await firstValueFrom(
+      this.http.delete(`${API_BASE}/uploads/${encodeURIComponent(id)}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
     );

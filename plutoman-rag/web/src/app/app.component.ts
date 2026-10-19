@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ApiService, RetrievalHit, SearchFilters } from './api.service';
+import { ApiService, RetrievalHit, SearchFilters, UploadItem, UploadLimits } from './api.service';
 
 interface TenantOption {
   id: string;
@@ -44,6 +44,16 @@ export class AppComponent implements OnInit {
   error: string | null = null;
   searchesToday = 0;
 
+  // --- your documents (uploads) ---
+  uploads: UploadItem[] = [];
+  uploadLimits: UploadLimits | null = null;
+  uploadErrors: string[] = [];
+  uploading = 0;
+  dragOver = false;
+  /** Upload awaiting the inline "Remove / Keep" choice (no browser dialogs). */
+  confirmRemoveId: string | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(private api: ApiService) {}
 
   async ngOnInit(): Promise<void> {
@@ -56,7 +66,7 @@ export class AppComponent implements OnInit {
     try {
       this.token = await this.api.devToken(this.tenantId);
       this.tokenReady = true;
-      await this.refreshUsage();
+      await Promise.all([this.refreshUsage(), this.refreshUploads()]);
     } catch {
       this.error =
         'Could not reach the API / mint a dev token. Is the backend running with DEV_MODE=true on :3000?';
@@ -68,6 +78,75 @@ export class AppComponent implements OnInit {
     this.conversationId = null;
     this.messages = [];
     await this.refreshToken();
+  }
+
+  // --- your documents ----------------------------------------------------------
+
+  /** Reload the upload list; keep polling while anything is still indexing. */
+  async refreshUploads(): Promise<void> {
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    this.pollTimer = null;
+    try {
+      const res = await this.api.listUploads(this.token);
+      this.uploads = res.uploads;
+      this.uploadLimits = res.limits;
+    } catch {
+      return; // non-fatal: the chat still works without the list
+    }
+    if (this.uploads.some((u) => u.status === 'queued' || u.status === 'processing')) {
+      this.pollTimer = setTimeout(() => this.refreshUploads(), 2000);
+    }
+  }
+
+  get acceptList(): string {
+    return (this.uploadLimits?.extensions ?? ['.pdf', '.xlsx', '.csv', '.txt', '.md']).join(',');
+  }
+
+  onFilesPicked(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (input.files) void this.uploadFiles(Array.from(input.files));
+    input.value = ''; // allow re-picking the same file
+  }
+
+  onDrop(event: DragEvent): void {
+    event.preventDefault();
+    this.dragOver = false;
+    if (event.dataTransfer?.files) void this.uploadFiles(Array.from(event.dataTransfer.files));
+  }
+
+  async uploadFiles(files: File[]): Promise<void> {
+    if (!this.tokenReady || files.length === 0) return;
+    this.uploadErrors = [];
+    const maxBytes = (this.uploadLimits?.maxMb ?? 15) * 1024 * 1024;
+    for (const file of files) {
+      if (file.size > maxBytes) {
+        this.uploadErrors.push(`${file.name}: larger than ${this.uploadLimits?.maxMb ?? 15} MB`);
+        continue;
+      }
+      this.uploading++;
+      try {
+        await this.api.uploadFile(this.token, file);
+      } catch (e: any) {
+        this.uploadErrors.push(`${file.name}: ${e?.error?.error ?? 'upload failed'}`);
+      } finally {
+        this.uploading--;
+      }
+    }
+    await this.refreshUploads();
+  }
+
+  async removeUpload(u: UploadItem): Promise<void> {
+    this.confirmRemoveId = null;
+    try {
+      await this.api.deleteUpload(this.token, u.id);
+    } catch {
+      this.uploadErrors = [`${u.filename}: could not be removed`];
+    }
+    await this.refreshUploads();
+  }
+
+  formatSize(bytes: number): string {
+    return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
   }
 
   newConversation(): void {

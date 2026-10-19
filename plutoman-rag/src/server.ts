@@ -11,6 +11,7 @@ import express from "express";
 import cors from "cors";
 import { config } from "./config";
 import { router } from "./retrieval/retrievalService";
+import { demoRouter } from "./demoRoutes";
 import { startWorker } from "./ingestion/ingestWorker";
 import { assertIsolation } from "./isolationCheck";
 
@@ -38,6 +39,8 @@ app.use(express.json({ limit: "25mb" }));
 
 // Mount the API.
 app.use("/", router);
+// Document uploads for the local / demo UI (GET/POST/DELETE /uploads).
+app.use("/", demoRouter);
 
 // Last-resort error handler: any error forwarded from a route (see asyncRoute
 // in retrievalService.ts) fails THAT request with a generic 500 — no internal

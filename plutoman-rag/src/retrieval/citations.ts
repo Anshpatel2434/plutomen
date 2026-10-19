@@ -33,7 +33,9 @@ export interface Citation {
  * fall back to the source id otherwise.
  */
 export function sourceLabel(c: Citation): string {
-  if (!c.poid) return c.sopId;
+  // Uploaded documents have no POID: name the file and where in it the
+  // passage is ("Inspection SOP.pdf, part 3" / "..., Section 2: Isolation > Step 2.1").
+  if (!c.poid) return c.sectionPath ? `${c.sopId}, ${c.sectionPath}` : c.sopId;
   return c.page ? `${c.poid}.pdf p.${c.page}` : `${c.poid}.pdf`;
 }
 

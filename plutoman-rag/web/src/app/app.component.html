@@ -65,6 +65,39 @@
 
     <!-- Right: filters + sources -->
     <aside class="side-col">
+      <div class="panel docs">
+        <div class="panel-head">
+          Your documents <span class="count" *ngIf="uploads.length">{{ uploads.length }}</span>
+        </div>
+        <label class="dropzone" [class.over]="dragOver"
+               (dragover)="$event.preventDefault(); dragOver = true"
+               (dragleave)="dragOver = false"
+               (drop)="onDrop($event)">
+          <input type="file" multiple [accept]="acceptList" (change)="onFilesPicked($event)" [disabled]="!tokenReady" />
+          <span class="dz-title">{{ uploading ? 'Uploading…' : 'Drop files here or click to browse' }}</span>
+          <span class="dz-hint">PDF, Excel (.xlsx), CSV, TXT, MD · up to {{ uploadLimits?.maxMb ?? 15 }} MB each</span>
+        </label>
+        <div class="up-error" *ngFor="let e of uploadErrors">{{ e }}</div>
+        <div class="doc" *ngFor="let u of uploads">
+          <div class="doc-main">
+            <div class="doc-name" [title]="u.filename">{{ u.filename }}</div>
+            <div class="doc-meta">
+              <span class="doc-status" [class]="u.status">{{ u.status === 'ready' ? 'Ready' : u.status === 'failed' ? 'Failed' : 'Indexing…' }}</span>
+              <span *ngIf="u.status === 'ready'">· {{ u.chunkCount }} passages</span>
+              <span>· {{ formatSize(u.sizeBytes) }}</span>
+            </div>
+            <div class="doc-error" *ngIf="u.status === 'failed' && u.error">{{ u.error }}</div>
+            <div class="doc-confirm" *ngIf="confirmRemoveId === u.id">
+              <span>Remove this document?</span>
+              <button class="doc-yes" (click)="removeUpload(u)">Remove</button>
+              <button class="doc-no" (click)="confirmRemoveId = null">Keep</button>
+            </div>
+          </div>
+          <button class="doc-del" *ngIf="confirmRemoveId !== u.id" (click)="confirmRemoveId = u.id" title="Remove this document">✕</button>
+        </div>
+        <div class="src-empty" *ngIf="!uploads.length">Upload your own files, then ask questions about them. The sample reports are already loaded.</div>
+      </div>
+
       <div class="panel filters">
         <div class="panel-head">Filters</div>
         <label>Site</label>

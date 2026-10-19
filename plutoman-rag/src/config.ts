@@ -30,6 +30,18 @@ const ConfigSchema = z.object({
   // conversational coherence in generation. History is NEVER a source of facts.
   CHAT_HISTORY_TURNS: z.coerce.number().int().positive().default(6),
 
+  // --- Free-form documents (PDF / TXT / CSV / MD uploads) -----------------
+  // Size and overlap of the passages a free-form document is cut into.
+  PROSE_CHUNK_CHARS: z.coerce.number().int().positive().default(1200),
+  PROSE_CHUNK_OVERLAP: z.coerce.number().int().nonnegative().default(180),
+
+  // --- Document uploads (web UI) -------------------------------------------
+  UPLOAD_MAX_MB: z.coerce.number().positive().default(15),
+  UPLOAD_MAX_FILES: z.coerce.number().int().positive().default(50),
+  // Access codes for a hosted demo, "tenant=code;tenant2=code2". Empty = the
+  // /demo/login route is disabled. Codes are secrets: never commit them.
+  DEMO_ACCESS_CODES: z.string().default(""),
+
   // --- Keyword ranker (eval change 8) ------------------------------------
   // Share (0..1) of a question's rarity-weighted (IDF) words a chunk must
   // contain to count as a keyword match. See src/retrieval/keywords.ts.
