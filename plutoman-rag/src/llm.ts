@@ -20,6 +20,10 @@ export interface ChatRequest {
   user: string;
   /** Upper bound on generated tokens. */
   maxTokens?: number;
+  /** Context window to request (default 4096). The data engine's prompt carries the schema and catalog. */
+  numCtx?: number;
+  /** Model to use instead of GEN_MODEL (the data engine may use a different one, DATA_MODEL). */
+  model?: string;
 }
 
 interface OllamaChatResponse {
@@ -33,13 +37,13 @@ interface OllamaChatResponse {
  */
 export async function chatComplete(req: ChatRequest): Promise<string> {
   const resp = await axios.post<OllamaChatResponse>(`${config.OLLAMA_URL}/api/chat`, {
-    model: config.GEN_MODEL,
+    model: req.model ?? config.GEN_MODEL,
     messages: [
       { role: "system", content: req.system },
       { role: "user", content: req.user },
     ],
     stream: false,
-    options: { temperature: 0, num_ctx: 4096, num_predict: req.maxTokens ?? 512 },
+    options: { temperature: 0, num_ctx: req.numCtx ?? 4096, num_predict: req.maxTokens ?? 512 },
   });
   return resp.data.message.content.trim();
 }

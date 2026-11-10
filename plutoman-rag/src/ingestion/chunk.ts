@@ -130,7 +130,11 @@ function parseReportDate(report: ParsedReport): string | null {
     "";
   if (!raw) return null;
   const d = new Date(raw.replace(/,\s*\d{1,2}:\d{2}\s*[AP]M$/i, "")); // strip trailing time
-  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  if (Number.isNaN(d.getTime())) return null;
+  // The calendar day as written. (toISOString() converts to UTC first, which
+  // moves "Aug 12, 2026" to the 11th on a machine east of Greenwich.)
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
 }
 
 /**

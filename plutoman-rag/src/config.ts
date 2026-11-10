@@ -42,6 +42,17 @@ const ConfigSchema = z.object({
   // /demo/login route is disabled. Codes are secrets: never commit them.
   DEMO_ACCESS_CODES: z.string().default(""),
 
+  // --- Data engine (counts, lists, comparisons, overviews) ---------------
+  // Questions that need every matching record are answered by a database
+  // query the model writes over the inspection tables (src/data/). "false"
+  // sends every question to search, as before.
+  DATA_ENGINE: z
+    .enum(["true", "false", "1", "0"])
+    .default("true")
+    .transform((v) => v === "true" || v === "1"),
+  // Model that writes the query and words the result. Empty = GEN_MODEL.
+  DATA_MODEL: z.string().default(""),
+
   // --- Keyword ranker (eval change 8) ------------------------------------
   // Share (0..1) of a question's rarity-weighted (IDF) words a chunk must
   // contain to count as a keyword match. See src/retrieval/keywords.ts.

@@ -52,6 +52,8 @@ import { parseDocumentBuffer, formatOf } from "./parseDocument";
 import { chunkProse } from "./chunkProse";
 import { parseSop, sectionEmbedText, stepEmbedText } from "./parseSop";
 import { setUploadStatus } from "../uploads";
+import { buildFacts, ReportFacts } from "../data/buildFacts";
+import { replaceFacts } from "../data/storeFacts";
 import {
   INGEST_QUEUE_NAME,
   IngestJobData,
@@ -173,7 +175,7 @@ async function buildFromWorkbook(
   buffer: Buffer,
   mongoId: string,
   pdf: ParsedPdf | null
-): Promise<{ meta: DocMeta; chunks: PendingChunk[] }> {
+): Promise<{ meta: DocMeta; chunks: PendingChunk[]; facts: ReportFacts }> {
   const report = await parseWorkbookBuffer(buffer);
   const ids = pdf ? { poid: pdf.poid, jobId: pdf.jobId } : {};
   const { metadata, chunks: xlsxChunks } = chunkReport(report, ids);
@@ -198,7 +200,12 @@ async function buildFromWorkbook(
     pages = [...pages, ...extra.pages];
   }
 
+  // The data engine's rows for this report (every item, with its printed page).
+  const pageOf = new Map(xlsxChunks.map((c, i) => [c.sectionPath, pages[i] ?? null]));
+  const facts = buildFacts(report, metadata, { reportId: ids.poid ?? mongoId, jobId: ids.jobId }, pageOf);
+
   return {
+    facts,
     meta: {
       ...metadata,
       // The POID is the report's real document handle when the twin is known.
@@ -340,7 +347,7 @@ async function buildChunks(
   buffer: Buffer,
   filename: string,
   data: IngestJobData
-): Promise<{ meta: DocMeta; chunks: PendingChunk[] }> {
+): Promise<{ meta: DocMeta; chunks: PendingChunk[]; facts?: ReportFacts }> {
   const mongoId = data.mongoId;
   if (/\.xlsx$/i.test(filename)) {
     return buildFromWorkbook(buffer, mongoId, await loadPdf(data));
@@ -410,7 +417,7 @@ export async function ingestUpsert(
 ): Promise<{ chunks: number; skipped?: boolean }> {
   const buffer = await loadBuffer(data);
   const filename = resolveFilename(data);
-  const { meta, chunks } = await buildChunks(buffer, filename, data);
+  const { meta, chunks, facts } = await buildChunks(buffer, filename, data);
 
   // Embed all chunk contents in one batched call (documents task prefix).
   const vectors = await embed(
@@ -526,6 +533,11 @@ export async function ingestUpsert(
         [data.tenantId, data.mongoId]
       );
     }
+
+    // 5) The data engine's rows, replaced in the same transaction as the
+    //    chunks so counts and passages can never disagree. Documents that are
+    //    not inspection workbooks have none.
+    await replaceFacts(client, data.tenantId, documentId, facts ?? null);
 
     return { chunks: chunks.length };
   });

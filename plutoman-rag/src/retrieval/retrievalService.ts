@@ -24,6 +24,7 @@ import { retrieve } from "./retrieve";
 import { generateAnswer } from "./generate";
 import { condenseQuery } from "./condense";
 import { resolveEntities, resolveChatEntities } from "./entities";
+import { answerWithData, DataAnswer, HistoryTurn as DataHistoryTurn } from "../data/dataEngine";
 import {
   createConversation,
   conversationExists,
@@ -32,6 +33,43 @@ import {
 } from "../conversation";
 
 export const router = Router();
+
+/**
+ * Try the data engine (counts, lists, comparisons, overviews — src/data/). It
+ * answers only when the question needs the records computed; null sends the
+ * question to search as before. Never fatal: any failure here also falls back.
+ * Skipped when the caller set explicit filters, which only search applies.
+ */
+async function tryDataEngine(
+  tenantId: string,
+  question: string,
+  history: DataHistoryTurn[],
+  generate: boolean,
+  filters: unknown
+): Promise<DataAnswer | null> {
+  if (!config.DATA_ENGINE || !generate) return null;
+  if (filters && Object.values(filters as Record<string, unknown>).some((v) => v)) return null;
+  try {
+    return await answerWithData(tenantId, question, history);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[data] engine failed, falling back to search:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+/** Response fields of a data-engine answer (shared by /search and /chat). */
+function dataBody(d: DataAnswer): Record<string, unknown> {
+  return {
+    answer: d.answer,
+    citations: d.citations,
+    results: [],
+    route: "data",
+    // The computed result itself, for the UI to show as tables.
+    tables: d.tables.map((t) => ({ title: t.title, columns: t.columns, rows: t.rows })),
+    coverage: d.coverage,
+  };
+}
 
 /**
  * Express 4 does not catch errors thrown from async handlers: a rejected
@@ -199,6 +237,25 @@ router.post("/search", requireAuth, rateLimit, asyncRoute(async (req: Request, r
     }
   }
 
+  // 0b) Questions that need the records counted, listed, compared or
+  //     summarised are answered from the inspection tables (data engine).
+  const data = await tryDataEngine(tenantId, query, [], generate, filters);
+  if (data) {
+    const body = dataBody(data);
+    await withTenant(tenantId, async (client) => {
+      await client.query(`INSERT INTO audit (tenant_id, user_id, query, retrieved_ids) VALUES ($1, $2, $3, $4)`, [
+        tenantId,
+        userId,
+        query,
+        [],
+      ]);
+    });
+    if (cacheKey) await cacheSetJSON(cacheKey, body, config.CACHE_TTL_SECONDS);
+    await recordUsage(tenantId, { searches: 1, genTokens: approxTokens(data.answer) });
+    res.json(body);
+    return;
+  }
+
   // 1) Resolve reports named in the question (job / POID / vendor / report
   //    type) into hard filters, then hybrid retrieval (RLS-scoped to tenant
   //    inside hybridSearch). The resolution is deterministic for a given query
@@ -309,6 +366,25 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
     conversationId,
     config.CHAT_HISTORY_TURNS
   );
+
+  // 2b) Questions that need the records counted, listed, compared or
+  //     summarised are answered from the inspection tables (data engine).
+  const data = await tryDataEngine(tenantId, message, history, generate, filters);
+  if (data) {
+    await appendMessage(tenantId, conversationId, "user", message);
+    await appendMessage(tenantId, conversationId, "assistant", data.answer, data.citations);
+    await withTenant(tenantId, async (client) => {
+      await client.query(`INSERT INTO audit (tenant_id, user_id, query, retrieved_ids) VALUES ($1, $2, $3, $4)`, [
+        tenantId,
+        userId,
+        message,
+        [],
+      ]);
+    });
+    await recordUsage(tenantId, { searches: 1, genTokens: approxTokens(data.answer) });
+    res.json({ conversationId, ...dataBody(data) });
+    return;
+  }
 
   // 3) History-aware rewrite -> standalone search query. Falls back to `message`
   //    on empty history or any Ollama error (never blocks the chat).
