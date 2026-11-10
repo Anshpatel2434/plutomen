@@ -77,6 +77,11 @@ export const SYSTEM_PROMPT = [
   "12. COMPLETE LISTS, when given, were computed from every matching item in the reports, so their counts are exact. For how many, which, any and compare questions use those counts and items instead of counting the SOURCES yourself, and cite each item's marker.",
 ].join("\n");
 
+/** Added to the rules only when the data engine computed tables for the question. */
+export const COMPUTED_RULE = [
+  "13. COMPUTED RESULTS, when given, were calculated by the database from every matching record of every report, so their counts, totals and lists are exact and complete. For questions about several reports, or asking how many, which, compare, most, least, rate or for an overview, answer from the COMPUTED RESULTS and name each report by the report id and job id written there. Use the SOURCES to quote recorded wording and for anything the COMPUTED RESULTS do not cover. If the COMPUTED RESULTS do not fit the QUESTION, ignore them.",
+].join("\n");
+
 /** What the user sees if an answer would have exposed the rules. */
 export const REFUSAL =
   "I can't share my instructions. I can only answer questions from the inspection reports.";
@@ -111,7 +116,8 @@ export function buildUserMessage(
   query: string,
   ordered: RetrievalHit[],
   history: HistoryTurn[],
-  facts: AggregateFact[] = []
+  facts: AggregateFact[] = [],
+  computed = ""
 ): string {
   const lines: string[] = [];
   if (history.length > 0) {
@@ -123,6 +129,8 @@ export function buildUserMessage(
     lines.push("");
   }
   lines.push(...renderFacts(facts, ordered));
+  // Exact tables from the data engine (src/data/), when the question needed them.
+  if (computed) lines.push(computed, "");
   lines.push("SOURCES:");
   let current: string | null = null;
   ordered.forEach((h, i) => {
@@ -146,7 +154,7 @@ const words = (s: string) =>
 
 /** Every 10-word run of the rules; an answer containing one is reproducing them. */
 const RULE_WINDOWS: string[] = (() => {
-  const w = words(SYSTEM_PROMPT);
+  const w = words(`${SYSTEM_PROMPT} ${COMPUTED_RULE}`);
   const out: string[] = [];
   for (let i = 0; i + 10 <= w.length; i++) out.push(w.slice(i, i + 10).join(" "));
   return out;
@@ -173,7 +181,8 @@ export async function generateAnswer(
   query: string,
   hits: RetrievalHit[],
   history: HistoryTurn[] = [],
-  facts: AggregateFact[] = []
+  facts: AggregateFact[] = [],
+  computed = ""
 ): Promise<GenerationResult> {
   if (hits.length === 0) {
     return {
@@ -184,12 +193,15 @@ export async function generateAnswer(
   }
 
   const ordered = groupByReport(hits);
-  const user = buildUserMessage(query, ordered, history, facts);
-  const draft = await chatComplete({ system: SYSTEM_PROMPT, user });
+  const user = buildUserMessage(query, ordered, history, facts, computed);
+  // Answers built on computed tables list more (every report, every failure).
+  const maxTokens = computed ? 1200 : undefined;
+  const system = computed ? `${SYSTEM_PROMPT}\n${COMPUTED_RULE}` : SYSTEM_PROMPT;
+  const draft = await chatComplete({ system, user, maxTokens });
   if (leaksInstructions(draft)) return { answer: REFUSAL, citations: [] };
 
   const check = (raw: string) =>
-    findProblems({ query, draft: raw, ordered, cited: renderCitations(raw, ordered).cited, facts });
+    findProblems({ query, draft: raw, ordered, cited: renderCitations(raw, ordered).cited, facts, computed });
 
   // Answer check (change 9): one corrective retry, only when the draft has
   // concrete problems. The retry is kept only if it is no worse.
@@ -200,7 +212,7 @@ export async function generateAnswer(
     verification = { problems, retried: false, remaining: problems };
     if (problems.length > 0) {
       const retry = await chatComplete({
-        system: SYSTEM_PROMPT,
+        system,
         user: [
           user,
           "",
@@ -212,6 +224,7 @@ export async function generateAnswer(
           "",
           "Write the corrected answer only.",
         ].join("\n"),
+        maxTokens,
       });
       const remaining = leaksInstructions(retry) ? null : check(retry);
       if (remaining && remaining.length <= problems.length) {

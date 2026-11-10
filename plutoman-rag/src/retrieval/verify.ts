@@ -102,6 +102,8 @@ export interface VerifyInput {
   /** 0-based indices of the sources the draft cites. */
   cited: number[];
   facts: AggregateFact[];
+  /** Exact tables from the data engine shown to the model (their figures are grounded too). */
+  computed?: string;
 }
 
 /** Values longer than this are descriptions, not values to quote. */
@@ -151,8 +153,9 @@ export function findProblems(v: VerifyInput): string[] {
     return problems.slice(0, MAX_PROBLEMS);
   }
 
-  // 2) An answer must cite its sources.
-  if (v.cited.length === 0) {
+  // 2) An answer must cite its sources. (An answer drawn from the data
+  //    engine's tables names reports by id instead of by source marker.)
+  if (v.cited.length === 0 && !v.computed) {
     problems.push("Your answer cites no source. Add the marker of the source for every fact, for example [S1].");
   }
 
@@ -182,7 +185,7 @@ export function findProblems(v: VerifyInput): string[] {
   // 4) No figure may appear that is in no source, not in the complete lists'
   //    counts and not in the question.
   const sourcesText = norm(
-    [...v.ordered.map((h) => h.content), ...renderFacts(v.facts, v.ordered)].join(" \n ")
+    [...v.ordered.map((h) => h.content), ...renderFacts(v.facts, v.ordered), v.computed ?? ""].join(" \n ")
   );
   const question = norm(v.query);
   const invented = [...new Set(numbersIn(v.draft))].filter(

@@ -385,6 +385,69 @@ export async function answerWithData(
   question: string,
   history: HistoryTurn[] = []
 ): Promise<DataAnswer | null> {
+  const computed = await computeTables(tenantId, question, history);
+  if (!computed) return null;
+  const { tables, reportsTotal } = computed;
+
+  const results = tables.map((t) => renderTable(t)).join("\n\n");
+  const user = [...historyBlock(history), "RESULT", results, "", `QUESTION: ${question}`].join("\n");
+  let answer = await chatComplete({ system: ANSWER_SYSTEM_PROMPT, user, maxTokens: DATA_MAX_TOKENS, numCtx: 8192, model: model() });
+  let invented = inventedNumbers(answer, tables, question);
+  if (invented.length > 0) {
+    answer = await chatComplete({
+      system: ANSWER_SYSTEM_PROMPT,
+      user: [
+        user,
+        "",
+        "YOUR DRAFT ANSWER:",
+        answer,
+        "",
+        `These figures are not in the RESULT: ${invented.join(", ")}. Rewrite the answer using only figures that appear in the RESULT.`,
+      ].join("\n"),
+      maxTokens: DATA_MAX_TOKENS,
+      numCtx: 8192,
+      model: model(),
+    });
+    invented = inventedNumbers(answer, tables, question);
+  }
+  // Still a figure the database did not produce, or wording that says nothing
+  // was found although rows were: show the result itself.
+  if (invented.length > 0 || deniesResult(answer, tables)) answer = plainAnswer(tables);
+
+  return {
+    answer: answer.trim(),
+    tables,
+    citations: citationsFrom(tables),
+    coverage: coverageOf(tables, reportsTotal),
+  };
+}
+
+/** The block the search path's answer prompt shows the model (see generate.ts rule 13). */
+export function computedBlock(tables: DataTable[]): string {
+  return ["COMPUTED RESULTS (calculated by the database from every matching record; exact and complete):", ...tables.map((t) => renderTable(t))].join("\n");
+}
+
+/** How many reports the result rows name (null = an aggregate with no report ids). */
+export function coverageOf(tables: DataTable[], reportsTotal: number): DataAnswer["coverage"] {
+  const named = new Set<string>();
+  let hasReportId = false;
+  for (const t of tables) {
+    if (!t.columns.includes("report_id")) continue;
+    hasReportId = true;
+    for (const r of t.rows) named.add(cell(r["report_id"]));
+  }
+  return { reportsTotal, reportsInResult: hasReportId ? named.size : null };
+}
+
+/**
+ * Steps 1 and 2 of the engine: have the model write the queries and run them.
+ * Null when the question is a lookup or nothing trustworthy was found.
+ */
+export async function computeTables(
+  tenantId: string,
+  question: string,
+  history: HistoryTurn[] = []
+): Promise<{ tables: DataTable[]; reportsTotal: number } | null> {
   const catalog = await loadDataCatalog(tenantId);
   if (catalog.reports === 0) return null; // nothing to count
 
@@ -450,43 +513,5 @@ export async function answerWithData(
   // query is not trusted on its own (it may be a lookup after all, be about an
   // uploaded document, or the filter may simply not match the data).
   if (tables.length === 0 || tables.every((t) => foundNothing(t))) return null;
-
-  const results = tables.map((t) => renderTable(t)).join("\n\n");
-  const user = [...historyBlock(history), "RESULT", results, "", `QUESTION: ${question}`].join("\n");
-  let answer = await chatComplete({ system: ANSWER_SYSTEM_PROMPT, user, maxTokens: DATA_MAX_TOKENS, numCtx: 8192, model: model() });
-  let invented = inventedNumbers(answer, tables, question);
-  if (invented.length > 0) {
-    answer = await chatComplete({
-      system: ANSWER_SYSTEM_PROMPT,
-      user: [
-        user,
-        "",
-        "YOUR DRAFT ANSWER:",
-        answer,
-        "",
-        `These figures are not in the RESULT: ${invented.join(", ")}. Rewrite the answer using only figures that appear in the RESULT.`,
-      ].join("\n"),
-      maxTokens: DATA_MAX_TOKENS,
-      numCtx: 8192,
-      model: model(),
-    });
-    invented = inventedNumbers(answer, tables, question);
-  }
-  // Still a figure the database did not produce, or wording that says nothing
-  // was found although rows were: show the result itself.
-  if (invented.length > 0 || deniesResult(answer, tables)) answer = plainAnswer(tables);
-
-  const named = new Set<string>();
-  let hasReportId = false;
-  for (const t of tables) {
-    if (!t.columns.includes("report_id")) continue;
-    hasReportId = true;
-    for (const r of t.rows) named.add(cell(r["report_id"]));
-  }
-  return {
-    answer: answer.trim(),
-    tables,
-    citations: citationsFrom(tables),
-    coverage: { reportsTotal: catalog.reports, reportsInResult: hasReportId ? named.size : null },
-  };
+  return { tables, reportsTotal: catalog.reports };
 }

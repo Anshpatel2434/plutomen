@@ -50,6 +50,10 @@ const ConfigSchema = z.object({
     .enum(["true", "false", "1", "0"])
     .default("true")
     .transform((v) => v === "true" || v === "1"),
+  // "answer": the engine words its own answer from the result tables.
+  // "augment": the tables are handed to the search path's answer step, next
+  // to the retrieved passages, so one answer can use both.
+  DATA_MODE: z.enum(["answer", "augment"]).default("answer"),
   // Model that writes the query and words the result. Empty = GEN_MODEL.
   DATA_MODEL: z.string().default(""),
 

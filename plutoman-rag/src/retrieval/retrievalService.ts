@@ -24,7 +24,16 @@ import { retrieve } from "./retrieve";
 import { generateAnswer } from "./generate";
 import { condenseQuery } from "./condense";
 import { resolveEntities, resolveChatEntities } from "./entities";
-import { answerWithData, displayRows, DataAnswer, HistoryTurn as DataHistoryTurn } from "../data/dataEngine";
+import {
+  answerWithData,
+  computeTables,
+  computedBlock,
+  coverageOf,
+  displayRows,
+  DataAnswer,
+  DataTable,
+  HistoryTurn as DataHistoryTurn,
+} from "../data/dataEngine";
 import {
   createConversation,
   conversationExists,
@@ -47,7 +56,7 @@ async function tryDataEngine(
   generate: boolean,
   filters: unknown
 ): Promise<DataAnswer | null> {
-  if (!config.DATA_ENGINE || !generate) return null;
+  if (!config.DATA_ENGINE || config.DATA_MODE !== "answer" || !generate) return null;
   if (filters && Object.values(filters as Record<string, unknown>).some((v) => v)) return null;
   try {
     return await answerWithData(tenantId, question, history);
@@ -56,6 +65,38 @@ async function tryDataEngine(
     console.error("[data] engine failed, falling back to search:", err instanceof Error ? err.message : String(err));
     return null;
   }
+}
+
+/**
+ * "augment" mode: only compute the tables. The search path then answers from
+ * the tables AND the retrieved passages together. Same fallbacks as above.
+ */
+async function tryCompute(
+  tenantId: string,
+  question: string,
+  history: DataHistoryTurn[],
+  generate: boolean,
+  filters: unknown
+): Promise<{ tables: DataTable[]; reportsTotal: number } | null> {
+  if (!config.DATA_ENGINE || config.DATA_MODE !== "augment" || !generate) return null;
+  if (filters && Object.values(filters as Record<string, unknown>).some((v) => v)) return null;
+  try {
+    return await computeTables(tenantId, question, history);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[data] compute failed, answering from search only:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+/** Extra response fields when computed tables were used alongside search. */
+function computedFields(c: { tables: DataTable[]; reportsTotal: number } | null): Record<string, unknown> {
+  if (!c) return {};
+  return {
+    route: "data",
+    tables: c.tables.map((t) => ({ title: t.title, columns: t.columns, rows: displayRows(t), sql: t.sql })),
+    coverage: coverageOf(c.tables, c.reportsTotal),
+  };
 }
 
 /** Response fields of a data-engine answer (shared by /search and /chat). */
@@ -270,8 +311,9 @@ router.post("/search", requireAuth, rateLimit, asyncRoute(async (req: Request, r
 
   // 3) Optional grounded generation (answers are checked against their
   //    sources, eval change 9).
+  const computed = await tryCompute(tenantId, query, [], generate, filters);
   const generation = generate
-    ? await generateAnswer(query, hits, [], facts)
+    ? await generateAnswer(query, hits, [], facts, computed ? computedBlock(computed.tables) : "")
     : { answer: null, citations: hits.map((h) => h.citation), verification: undefined };
 
   // 4) Audit the request (RLS-scoped write). This is a WRITE, so it MUST go to
@@ -301,6 +343,7 @@ router.post("/search", requireAuth, rateLimit, asyncRoute(async (req: Request, r
     // answer check found (eval change 9) — for transparency and testing.
     aggregation: facts.map((f) => ({ heading: f.heading, counts: f.counts, listed: f.items.length })),
     verification: generation.verification,
+    ...computedFields(computed),
   };
 
   // 5) Populate the cache on a miss. `cached: true` is added only when SERVING
@@ -402,8 +445,9 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
   // 6) Grounded generation. The ORIGINAL user `message` is the question; history
   //    is passed only for conversational coherence (see generateAnswer's
   //    grounding invariant) — answers stay grounded in the retrieved context.
+  const computed = await tryCompute(tenantId, message, history, generate, filters);
   const generation = generate
-    ? await generateAnswer(message, hits, history, facts)
+    ? await generateAnswer(message, hits, history, facts, computed ? computedBlock(computed.tables) : "")
     : { answer: null as string | null, citations: hits.map((h) => h.citation), verification: undefined };
 
   // 7) Persist both turns (user first, then assistant) so the next turn has
@@ -444,6 +488,7 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
     appliedFilters: resolved.applied,
     aggregation: facts.map((f) => ({ heading: f.heading, counts: f.counts, listed: f.items.length })),
     verification: generation.verification,
+    ...computedFields(computed),
   });
 }));
 
