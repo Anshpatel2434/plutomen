@@ -120,6 +120,8 @@ export const SCHEMA = `TABLE inspection_reports  (one row per inspection report)
   test_results         text  conclusion as written;  test_results_result  'PASS' | 'FAIL' | 'CONDITIONAL'
   technical_clearance  text  conclusion as written;  clearance_result     'PASS' | 'FAIL' | 'CONDITIONAL'
   declaration          text  the dispatch decision as written;  declaration_result 'PASS' | 'FAIL' | 'CONDITIONAL'
+  outcome_summary      text  the whole conclusion in the report's own words (all three fields with their notes)
+  outcome_conflict     boolean  true when the three conclusion fields do not agree with each other
   items_checked, items_passed, items_failed, items_conditional  integer  tally of the report's checked items
 
 TABLE inspection_items  (one row per item recorded in a report)
@@ -183,7 +185,9 @@ export function planSystemPrompt(cat: DataCatalog, today: string): string {
     "   When rows are reports, select report_id, job_id, vendor and the columns asked about.",
     "4. \"Did not pass\" means result IN ('FAIL', 'CONDITIONAL'). Items with result NULL were not checks: leave them out of counts of checks.",
     "5. A rate is ROUND(100.0 * part / NULLIF(whole, 0), 1). Counting items per report or vendor: use the tally columns of inspection_reports when they fit.",
-    "6. A lot's outcome is in test_results_result, clearance_result and declaration_result. They can disagree within one report; when the question is about the outcome, select all three.",
+    "6. Whenever the question is about a lot's outcome (cleared, rejected, dispatch, accepted, passed overall), select",
+    "   report_id, job_id, vendor, outcome_summary, outcome_conflict and items_failed. Never judge an outcome from one",
+    "   conclusion field alone: the three can disagree. Filter or count with the *_result columns, show outcome_summary.",
     "7. Give columns plain names with AS. ORDER BY what matters most. LIMIT lists to 50 rows.",
     "8. Everything recorded about a lot that is not a column of inspection_reports is a row of inspection_items:",
     "   people (engineers), codes, PO details, quantities, batch and serial numbers and sizes have area = 'Basic Details'.",
@@ -263,6 +267,12 @@ export const ANSWER_SYSTEM_PROMPT = [
   "5. If results in one report disagree with each other, say so and give both. Do not pick one.",
   "6. Do not explain causes, give advice or judge a vendor beyond what the tables state.",
   "7. Never mention SQL, queries, tables, columns or the database.",
+  "8. Quote what the report recorded, in its own words, whenever the table has it (value, note, outcome_summary).",
+  "   PASS, FAIL and CONDITIONAL are only classifications: write them as passed, failed, and pending or conditional,",
+  "   next to the recorded wording, never in place of it.",
+  "9. When outcome_conflict is true, say that the report's conclusions disagree and give each one. Do not answer",
+  "   with a plain yes or no.",
+  "10. Plain text only: no markdown, no asterisks, no headings.",
 ].join("\n");
 
 /** Numbers as written, ignoring thousands separators ("1,250" = "1250"). */
@@ -297,6 +307,17 @@ export function foundNothing(t: SqlTable): boolean {
     const v = cell(t.rows[0][c]);
     return v === "" || /^0+(\.0+)?$/.test(v);
   });
+}
+
+/** An answer claiming nothing was found. */
+const SAYS_NOTHING_FOUND = /\bno (matching |relevant )?(records?|results?|data|entries|items|reports?) (were|was|are|is)? ?found\b|\bno matching\b|\bnot found\b/i;
+
+/**
+ * The answer says nothing was found although every table has rows — the
+ * wording contradicts the result, so it cannot be shown. Pure.
+ */
+export function deniesResult(answer: string, tables: SqlTable[]): boolean {
+  return SAYS_NOTHING_FOUND.test(answer) && tables.every((t) => !foundNothing(t));
 }
 
 /** The result itself as the answer, when the model's wording cannot be trusted. */
@@ -451,8 +472,9 @@ export async function answerWithData(
     });
     invented = inventedNumbers(answer, tables, question);
   }
-  // Still a figure the database did not produce: show the result itself.
-  if (invented.length > 0) answer = plainAnswer(tables);
+  // Still a figure the database did not produce, or wording that says nothing
+  // was found although rows were: show the result itself.
+  if (invented.length > 0 || deniesResult(answer, tables)) answer = plainAnswer(tables);
 
   const named = new Set<string>();
   let hasReportId = false;

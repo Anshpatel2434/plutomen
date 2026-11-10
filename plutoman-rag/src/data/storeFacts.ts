@@ -31,13 +31,13 @@ export async function replaceFacts(
        (document_id, tenant_id, report_id, job_id, report_type, category, subcategory, site, vendor,
         inspection_date, prepared_by, status, test_results, test_results_result, technical_clearance,
         clearance_result, declaration, declaration_result, items_checked, items_passed, items_failed,
-        items_conditional)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+        items_conditional, outcome_summary, outcome_conflict)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
     [
       documentId, tenantId, r.reportId, r.jobId, r.reportType, r.category, r.subcategory, r.site, r.vendor,
       r.inspectionDate, r.preparedBy, r.status, r.testResults, r.testResultsResult, r.technicalClearance,
       r.clearanceResult, r.declaration, r.declarationResult, r.itemsChecked, r.itemsPassed, r.itemsFailed,
-      r.itemsConditional,
+      r.itemsConditional, r.outcomeSummary, r.outcomeConflict,
     ]
   );
 

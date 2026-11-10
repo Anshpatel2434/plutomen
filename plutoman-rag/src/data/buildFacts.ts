@@ -27,6 +27,10 @@ export interface ReportFact {
   clearanceResult: Result | null;
   declaration: string | null;
   declarationResult: Result | null;
+  /** The whole conclusion in the report's own words: "Test Results: … | Technical Clearance: … | Declaration: …". */
+  outcomeSummary: string | null;
+  /** True when the conclusion fields do not agree with each other. */
+  outcomeConflict: boolean;
   itemsChecked: number;
   itemsPassed: number;
   itemsFailed: number;
@@ -115,6 +119,18 @@ export function buildFacts(
   const declarationResult = c.declaration ? conclusion("Declaration", c.declaration, notes.declaration) : null;
   for (const e of c.extra) conclusion(e.title, e.answer, e.notes);
 
+  const part = (label: string, text: string, note: string): string | null =>
+    clean(text) ? `${label}: ${clean(text)}${clean(note) ? ` (note: ${clean(note)})` : ""}` : null;
+  const outcomeSummary =
+    [
+      part("Test Results", c.testResults, notes.testResults),
+      part("Technical Clearance", c.technicalClearance, notes.technicalClearance),
+      part("Declaration", c.declaration, notes.declaration),
+    ]
+      .filter(Boolean)
+      .join(" | ") || null;
+  const verdicts = new Set([testResultsResult, clearanceResult, declarationResult].filter(Boolean));
+
   const checked = items.filter((i) => i.area === "Characteristics" && i.result !== null);
   const cd = report.checklistDetails;
   return {
@@ -135,6 +151,8 @@ export function buildFacts(
       clearanceResult,
       declaration: clean(c.declaration),
       declarationResult,
+      outcomeSummary,
+      outcomeConflict: verdicts.size > 1,
       itemsChecked: checked.length,
       itemsPassed: checked.filter((i) => i.result === "PASS").length,
       itemsFailed: checked.filter((i) => i.result === "FAIL").length,
