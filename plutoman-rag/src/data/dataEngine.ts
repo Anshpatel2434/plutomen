@@ -164,11 +164,13 @@ export function planSystemPrompt(cat: DataCatalog, today: string): string {
     renderCatalog(cat),
     "",
     "DECIDE FIRST",
-    "Reply with the single word LOOKUP when the question:",
-    "- asks for one recorded value or note of one item in one report, or",
+    "Reply with the single word LOOKUP only when the question:",
+    "- is about ONE report and asks for one or two values or notes recorded in it, or",
     "- asks what a term means, or how a procedure / SOP / other document says to do something, or",
     "- is not about the inspection records at all.",
-    "Otherwise the question needs the records counted, listed, compared, ranked or summarised: write SQL.",
+    "Every other question is answered with SQL: anything about several reports, a whole section, a vendor, a site or",
+    "a person across reports; anything asking which, how many, list, all, any, compare, most, least, rate, share,",
+    "summary or overview.",
     "",
     "HOW TO REPLY WITH SQL",
     "One to three queries. Before each, a line `TITLE: <what the rows show>`, then the query in a ```sql block.",
@@ -183,7 +185,15 @@ export function planSystemPrompt(cat: DataCatalog, today: string): string {
     "5. A rate is ROUND(100.0 * part / NULLIF(whole, 0), 1). Counting items per report or vendor: use the tally columns of inspection_reports when they fit.",
     "6. A lot's outcome is in test_results_result, clearance_result and declaration_result. They can disagree within one report; when the question is about the outcome, select all three.",
     "7. Give columns plain names with AS. ORDER BY what matters most. LIMIT lists to 50 rows.",
-    `8. Today is ${today}.`,
+    "8. Everything recorded about a lot that is not a column of inspection_reports is a row of inspection_items:",
+    "   people (engineers), codes, PO details, quantities, batch and serial numbers and sizes have area = 'Basic Details'.",
+    "   prepared_by is only the person who filled in the checklist. Find rows by a distinctive word of the item name",
+    "   from the lists above: item ILIKE '%engineer%', item ILIKE '%ovality%'.",
+    "9. result holds only PASS / FAIL / CONDITIONAL. Any other wording (for example 'Not Attached', 'Major', a name,",
+    "   a measured figure) is in value or note: filter it with value ILIKE '%...%'.",
+    "10. Prefer selecting the matching rows to count(*) alone: you are told how many rows there are, and each row can be",
+    "    cited. Use count or sum when grouping (per vendor, per report, per section) or when the rows would exceed 50.",
+    `11. Today is ${today}.`,
   ].join("\n");
 }
 
@@ -263,14 +273,29 @@ export function inventedNumbers(answer: string, tables: DataTable[], question: s
   return [...new Set(numbersIn(answer))].filter((n) => !knownNorm.has(norm(n)));
 }
 
+/**
+ * True when a table found nothing: no rows, or one row of only zeros / blanks
+ * (a count(*) that matched nothing). Such a result is far more often a filter
+ * that does not match how the data is written than a true "none".
+ */
+export function foundNothing(t: SqlTable): boolean {
+  if (t.rows.length === 0) return true;
+  if (t.rows.length > 1) return false;
+  return t.columns.every((c) => {
+    const v = cell(t.rows[0][c]);
+    return v === "" || /^0+(\.0+)?$/.test(v);
+  });
+}
+
 /** The result itself as the answer, when the model's wording cannot be trusted. */
 function plainAnswer(tables: DataTable[]): string {
   return tables
     .map((t) => {
       if (t.rows.length === 0) return `${t.title}: no matching records were found.`;
+      const n = t.rows.length;
       const lines = t.rows.slice(0, 15).map((r) => `- ${t.columns.map((c) => `${c}: ${cell(r[c])}`).join("; ")}`);
-      if (t.rows.length > 15) lines.push(`- and ${t.rows.length - 15} more (see the table).`);
-      return `${t.title}:\n${lines.join("\n")}`;
+      if (n > 15) lines.push(`- and ${n - 15} more (see the table).`);
+      return `${t.title} (${n} record${n === 1 ? "" : "s"}):\n${lines.join("\n")}`;
     })
     .join("\n\n");
 }
@@ -355,11 +380,40 @@ export async function answerWithData(
         sql = fixed.queries[0].sql;
       }
     }
+    // Found nothing: ask ONCE whether the filter matches how the data is written.
+    if (table && foundNothing(table)) {
+      const again = parsePlan(
+        await chatComplete({
+          system,
+          user: [
+            ask, "", "YOUR QUERY:", "```sql", sql, "```", "",
+            "IT FOUND NOTHING. That usually means a filter does not match how the data is written: the wrong area or",
+            "column, an item name that is not in the lists, or a spelling. Check the lists and the rules again.",
+            "Reply with a corrected query in a ```sql block, or with the same query if you are sure nothing matches.",
+          ].join("\n"),
+          maxTokens: 500,
+          numCtx: 8192,
+          model: model(),
+        })
+      );
+      if (again.route === "data" && again.queries[0].sql.trim() !== sql.trim()) {
+        try {
+          const second = await runSql(tenantId, again.queries[0].sql);
+          if (!foundNothing(second)) {
+            table = second;
+            sql = again.queries[0].sql;
+          }
+        } catch {
+          // keep the first (empty) result
+        }
+      }
+    }
     if (table) tables.push({ title: q.title, sql, ...table });
   }
-  // Nothing ran, or nothing was found at all: let search try (it may be a
-  // lookup after all, or about an uploaded document).
-  if (tables.length === 0 || tables.every((t) => t.rows.length === 0)) return null;
+  // Nothing ran, or nothing was found at all: let search try. "None" from a
+  // query is not trusted on its own (it may be a lookup after all, be about an
+  // uploaded document, or the filter may simply not match the data).
+  if (tables.length === 0 || tables.every((t) => foundNothing(t))) return null;
 
   const results = tables.map((t) => renderTable(t)).join("\n\n");
   const user = [...historyBlock(history), "RESULT", results, "", `QUESTION: ${question}`].join("\n");
