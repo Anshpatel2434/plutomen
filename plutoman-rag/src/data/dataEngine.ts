@@ -231,6 +231,18 @@ function cell(v: unknown): string {
   return String(v).replace(/\s+/g, " ").trim();
 }
 
+/** A table's rows as plain values for the API / UI (dates as calendar days, no Date objects). */
+export function displayRows(t: SqlTable): Record<string, string | number | null>[] {
+  return t.rows.map((r) => {
+    const o: Record<string, string | number | null> = {};
+    for (const c of t.columns) {
+      const v = r[c];
+      o[c] = v === null || v === undefined ? null : typeof v === "number" ? v : cell(v);
+    }
+    return o;
+  });
+}
+
 export function renderTable(t: DataTable, maxRows = MAX_ROWS_IN_PROMPT): string {
   const head = `${t.title} (${t.rows.length} row${t.rows.length === 1 ? "" : "s"})`;
   if (t.rows.length === 0) return `${head}\n(no rows)`;
@@ -331,6 +343,9 @@ export function citationsFrom(tables: DataTable[]): Citation[] {
 
 const model = (): string | undefined => config.DATA_MODEL || undefined;
 
+/** Token budget per engine call. Generous: a model that reasons first spends part of it thinking. */
+const DATA_MAX_TOKENS = 2500;
+
 function historyBlock(history: HistoryTurn[]): string[] {
   if (history.length === 0) return [];
   return [
@@ -354,7 +369,7 @@ export async function answerWithData(
 
   const system = planSystemPrompt(catalog, new Date().toISOString().slice(0, 10));
   const ask = [...historyBlock(history), `QUESTION: ${question}`].join("\n");
-  const plan = parsePlan(await chatComplete({ system, user: ask, maxTokens: 700, numCtx: 8192, model: model() }));
+  const plan = parsePlan(await chatComplete({ system, user: ask, maxTokens: DATA_MAX_TOKENS, numCtx: 8192, model: model() }));
   if (plan.route === "lookup") return null;
 
   // Run each query; a refused or failing one gets ONE correction with the reason.
@@ -371,7 +386,7 @@ export async function answerWithData(
           await chatComplete({
             system,
             user: [ask, "", "YOUR QUERY:", "```sql", sql, "```", "", `IT FAILED: ${err.message}`, "", "Reply with the corrected query only, in a ```sql block."].join("\n"),
-            maxTokens: 500,
+            maxTokens: DATA_MAX_TOKENS,
             numCtx: 8192,
             model: model(),
           })
@@ -391,7 +406,7 @@ export async function answerWithData(
             "column, an item name that is not in the lists, or a spelling. Check the lists and the rules again.",
             "Reply with a corrected query in a ```sql block, or with the same query if you are sure nothing matches.",
           ].join("\n"),
-          maxTokens: 500,
+          maxTokens: DATA_MAX_TOKENS,
           numCtx: 8192,
           model: model(),
         })
@@ -417,7 +432,7 @@ export async function answerWithData(
 
   const results = tables.map((t) => renderTable(t)).join("\n\n");
   const user = [...historyBlock(history), "RESULT", results, "", `QUESTION: ${question}`].join("\n");
-  let answer = await chatComplete({ system: ANSWER_SYSTEM_PROMPT, user, maxTokens: 700, numCtx: 8192, model: model() });
+  let answer = await chatComplete({ system: ANSWER_SYSTEM_PROMPT, user, maxTokens: DATA_MAX_TOKENS, numCtx: 8192, model: model() });
   let invented = inventedNumbers(answer, tables, question);
   if (invented.length > 0) {
     answer = await chatComplete({
@@ -430,7 +445,7 @@ export async function answerWithData(
         "",
         `These figures are not in the RESULT: ${invented.join(", ")}. Rewrite the answer using only figures that appear in the RESULT.`,
       ].join("\n"),
-      maxTokens: 700,
+      maxTokens: DATA_MAX_TOKENS,
       numCtx: 8192,
       model: model(),
     });

@@ -24,7 +24,7 @@ import { retrieve } from "./retrieve";
 import { generateAnswer } from "./generate";
 import { condenseQuery } from "./condense";
 import { resolveEntities, resolveChatEntities } from "./entities";
-import { answerWithData, DataAnswer, HistoryTurn as DataHistoryTurn } from "../data/dataEngine";
+import { answerWithData, displayRows, DataAnswer, HistoryTurn as DataHistoryTurn } from "../data/dataEngine";
 import {
   createConversation,
   conversationExists,
@@ -66,7 +66,7 @@ function dataBody(d: DataAnswer): Record<string, unknown> {
     results: [],
     route: "data",
     // The computed result itself, for the UI to show as tables.
-    tables: d.tables.map((t) => ({ title: t.title, columns: t.columns, rows: t.rows })),
+    tables: d.tables.map((t) => ({ title: t.title, columns: t.columns, rows: displayRows(t), sql: t.sql })),
     coverage: d.coverage,
   };
 }
