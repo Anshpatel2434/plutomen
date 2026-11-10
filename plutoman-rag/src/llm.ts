@@ -26,6 +26,13 @@ export interface ChatRequest {
   model?: string;
 }
 
+/**
+ * One context size for every call. Ollama reloads a model whenever a request
+ * asks for a different num_ctx, so mixing sizes (4096 for answers, 8192 for
+ * the data engine) cost a reload on almost every question.
+ */
+const NUM_CTX = 8192;
+
 interface OllamaChatResponse {
   message: { role: string; content: string };
 }
@@ -43,7 +50,7 @@ export async function chatComplete(req: ChatRequest): Promise<string> {
       { role: "user", content: req.user },
     ],
     stream: false,
-    options: { temperature: 0, num_ctx: req.numCtx ?? 4096, num_predict: req.maxTokens ?? 512 },
+    options: { temperature: 0, num_ctx: req.numCtx ?? NUM_CTX, num_predict: req.maxTokens ?? 512 },
   });
   return resp.data.message.content.trim();
 }
