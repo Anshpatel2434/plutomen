@@ -100,9 +100,25 @@ export function unquotedRows(answer: string, t: SqlTable): Record<string, unknow
 /** The question asks for a count or a total. */
 export const ASKS_COUNT = /\bhow many\b|\bnumber of\b|\bcount\b|\btotal\b|\badd up\b|\bsum\b|\bhow much\b|\bin all\b|\baltogether\b/i;
 
-/** A total the answer states for itself: "Total: 4", "a total of 4", "4 in total". */
+/** The answer without list numbering ("11. Earthing" is the eleventh line, not a count of eleven). */
+export function withoutNumbering(answer: string): string {
+  return answer.replace(/^[ \t>*-]*\(?\d{1,3}[.)](?=\s)/gm, "");
+}
+
+/** Whole numbers in a piece of text. */
+const numbersOf = (s: string): number[] => [...s.matchAll(/(?<![\w.])\d{1,6}(?![\w.]*\d)/g)].map((m) => Number(m[0]));
+
+/**
+ * Counts the answer claims: "12 checks marked Not Ok", "3 reports", "Total: 4",
+ * "4 in total". (Numbers before a unit, a page or a percent are not counts.)
+ */
 function statedTotals(answer: string): number[] {
   const out: number[] = [];
+  for (const m of answer.matchAll(
+    /(?<![\w.])(\d{1,4})\**\s+(?:[A-Za-z&/'-]+\s+){0,4}?\**(checks?|items?|reports?|records?|tests?|lots?|entries|failures?|observations?|deviations?|non-conformances?|parameters?)\b/gi
+  )) {
+    out.push(Number(m[1]));
+  }
   for (const m of answer.matchAll(/\btotal\b[^.\n\d]{0,40}?(\d{1,6})(?![\d.]*\s*(?:%|percent|mm|mtr|m\b|kv|nos))|(\d{1,6})\s+in\s+total\b/gi)) {
     out.push(Number(m[1] ?? m[2]));
   }
@@ -131,7 +147,8 @@ function rowLine(t: SqlTable, r: Record<string, unknown>): string {
 }
 
 /** What is wrong with `answer`, given the tables computed for `question`. */
-export function tableProblems(question: string, answer: string, tables: CheckTable[]): TableProblems {
+export function tableProblems(question: string, rawAnswer: string, tables: CheckTable[]): TableProblems {
+  const answer = withoutNumbering(rawAnswer);
   const problems: string[] = [];
   let contradicts = false;
   const asksCount = ASKS_COUNT.test(question);
@@ -157,7 +174,9 @@ export function tableProblems(question: string, answer: string, tables: CheckTab
       }
       // A total of quantities (given by a totals table) is not a count of records.
       const computedFigures = new Set(tables.filter((x) => !isRecordList(x)).flatMap(figures).map((f) => Number(f)));
-      const wrong = statedTotals(answer).filter((x) => x !== n && !computedFigures.has(x));
+      // A figure the question itself gives ("of the 15 Acceptance Tests") is not a claim.
+      const given = new Set(numbersOf(question));
+      const wrong = statedTotals(answer).filter((x) => x !== n && !computedFigures.has(x) && !given.has(x));
       // The row count is the answer to "how many" only when no totals table gives it.
       const onlyLists = tables.every(isRecordList);
       if (asksCount && tables.filter(isRecordList).length === 1 && (onlyLists || computedFigures.has(n))) {
@@ -192,26 +211,40 @@ function cite(r: Record<string, unknown>): string {
   return id.startsWith("POID-") ? ` [${id}.pdf${page ? ` p.${page}` : ""}]` : ` [${id}]`;
 }
 
-/** Columns that are identity or position, not something to read out. */
-const QUIET = new Set(["report_id", "job_id", "vendor", "page", "position", "report_type", "site", "inspection_date", "item"]);
+/** Columns that are identity, position or a classification of the recorded wording: not read out. */
+const QUIET = new Set([
+  "report_id", "job_id", "vendor", "page", "position", "report_type", "site", "inspection_date", "item", "section",
+  "result", "marked", "area",
+]);
 
-/** One record as a sentence fragment: "Job PH… (ABB India Limited) – Earthing: Not Ok – note [POID-….pdf p.3]". */
-export function recordLine(t: SqlTable, r: Record<string, unknown>): string {
+/** "Job PH2026100002 (Siemens Ltd.)" for a row. */
+function reportOf(r: Record<string, unknown>): string {
   const job = text(r["job_id"]);
   const id = text(r["report_id"]);
   const vendor = text(r["vendor"]);
-  const who = [job ? `Job ${job}` : id ? `Report ${id}` : "", vendor ? `(${vendor})` : ""].filter(Boolean).join(" ");
-  const item = text(r["item"]);
+  return [job ? `Job ${job}` : id ? `Report ${id}` : "", vendor ? `(${vendor})` : ""].filter(Boolean).join(" ");
+}
+
+/**
+ * One record as a line: "Job PH… (ABB India Limited) – Visual & Physical
+ * Checks > Earthing: Not Ok – note [POID-….pdf p.3]". The report is left out
+ * when `withReport` is false (every line of the list is the same report).
+ */
+export function recordLine(t: SqlTable, r: Record<string, unknown>, withReport = true): string {
+  const item = [text(r["section"]), text(r["item"])].filter(Boolean).join(" > ");
   const rest = t.columns
     .filter((c) => !QUIET.has(c) && text(r[c]) !== "")
     .map((c) => (c === "value" || c === "note" ? text(r[c]) : `${c.replace(/_/g, " ")}: ${text(r[c])}`));
   const body = [item, rest.join(" – ")].filter(Boolean).join(": ");
-  return `- ${[who, body].filter(Boolean).join(" – ")}${cite(r)}`;
+  return `- ${[withReport ? reportOf(r) : "", body].filter(Boolean).join(" – ")}${cite(r)}`;
 }
 
 function renderList(t: CheckTable): string {
   const n = t.rows.length;
-  return [`${t.title} (${n} record${n === 1 ? "" : "s"}):`, ...t.rows.map((r) => recordLine(t, r))].join("\n");
+  const reports = new Set(t.rows.map(reportOf));
+  const one = reports.size === 1 && n > 1 ? [...reports][0] : "";
+  const head = `${t.title}: ${n} record${n === 1 ? "" : "s"}${one ? `, all in ${one}` : ""}.`;
+  return [head, ...t.rows.map((r) => recordLine(t, r, !one))].join("\n");
 }
 
 function renderTotals(t: CheckTable): string {
@@ -244,7 +277,7 @@ export function repairFromTables(question: string, answer: string, tables: Check
   for (const t of lists) {
     const n = t.rows.length;
     if (missingRows(answer, t).length > 0 || unquotedRows(answer, t).length > 0) add.push(`Complete list from the records — ${renderList(t)}`);
-    else if (asksCount && lists.length === 1 && totals.length === 0 && tables.every(isRecordList) && !statesNumber(answer, n)) add.push(`Total: ${n}.`);
+    else if (asksCount && lists.length === 1 && totals.length === 0 && tables.every(isRecordList) && !statesNumber(withoutNumbering(answer), n)) add.push(`Total: ${n}.`);
   }
   for (const t of totals) {
     if ([...new Set(figures(t))].some((f) => !statesNumber(answer, f))) add.push(`From the records — ${renderTotals(t)}`);

@@ -94,7 +94,7 @@ test("a total that contradicts the rows: the list comes from the rows", () => {
   const p = tableProblems("How many checks are marked Not Ok in PH9?", answer, [t]);
   assert.equal(p.contradicts, true);
   const fixed = repairFromTables("How many checks are marked Not Ok in PH9?", answer, [t]);
-  assert.match(fixed, /\(6 records\)/);
+  assert.match(fixed, /: 6 records, all in Job PH9/);
   assert.match(fixed, /Check 6/);
   assert.doesNotMatch(fixed, /Total Not Ok checks: 2/);
 });
