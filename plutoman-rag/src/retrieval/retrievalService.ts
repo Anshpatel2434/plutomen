@@ -28,10 +28,11 @@ import {
   answerWithData,
   computeTables,
   computedBlock,
+  hasComputed,
   coverageOf,
   displayRows,
+  Computed,
   DataAnswer,
-  DataTable,
   HistoryTurn as DataHistoryTurn,
 } from "../data/dataEngine";
 import {
@@ -76,12 +77,14 @@ async function tryCompute(
   question: string,
   history: DataHistoryTurn[],
   generate: boolean,
-  filters: unknown
-): Promise<{ tables: DataTable[]; reportsTotal: number } | null> {
+  filters: unknown,
+  jobIds: string[] = []
+): Promise<Computed | null> {
   if (!config.DATA_ENGINE || config.DATA_MODE !== "augment" || !generate) return null;
   if (filters && Object.values(filters as Record<string, unknown>).some((v) => v)) return null;
   try {
-    return await computeTables(tenantId, question, history);
+    const c = await computeTables(tenantId, question, history, jobIds);
+    return hasComputed(c) ? c : null;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[data] compute failed, answering from search only:", err instanceof Error ? err.message : String(err));
@@ -90,8 +93,8 @@ async function tryCompute(
 }
 
 /** Extra response fields when computed tables were used alongside search. */
-function computedFields(c: { tables: DataTable[]; reportsTotal: number } | null): Record<string, unknown> {
-  if (!c) return {};
+function computedFields(c: Computed | null): Record<string, unknown> {
+  if (!c || c.tables.length === 0) return {};
   return {
     route: "data",
     tables: c.tables.map((t) => ({ title: t.title, columns: t.columns, rows: displayRows(t), sql: t.sql })),
@@ -304,16 +307,19 @@ router.post("/search", requireAuth, rateLimit, asyncRoute(async (req: Request, r
   //    Questions asking for a list / count / comparison / the failures / the
   //    lot's decision also get every matching item (eval change 4).
   const resolved = await resolveEntities(tenantId, query);
-  const { hits, facts } = await retrieve(tenantId, query, {
-    topN: topK ?? 10,
-    filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
-  });
+  // Search and the data engine's queries run side by side.
+  const [{ hits, facts }, computed] = await Promise.all([
+    retrieve(tenantId, query, {
+      topN: topK ?? 10,
+      filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
+    }),
+    tryCompute(tenantId, query, [], generate, filters, resolved.applied.jobIds ?? []),
+  ]);
 
   // 3) Optional grounded generation (answers are checked against their
-  //    sources, eval change 9).
-  const computed = await tryCompute(tenantId, query, [], generate, filters);
+  //    sources, eval change 9, and against the computed tables).
   const generation = generate
-    ? await generateAnswer(query, hits, [], facts, computed ? computedBlock(computed.tables) : "")
+    ? await generateAnswer(query, hits, [], facts, computed ? { block: computedBlock(computed), tables: computed.tables } : null)
     : { answer: null, citations: hits.map((h) => h.citation), verification: undefined };
 
   // 4) Audit the request (RLS-scoped write). This is a WRITE, so it MUST go to
@@ -437,17 +443,21 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
   //    plus the rewrite unless the message is contrastive ("the OTHER Finolex
   //    job") — then hybrid retrieval (RLS-scoped) on the rewritten query.
   const resolved = await resolveChatEntities(tenantId, message, searchQuery);
-  const { hits, facts } = await retrieve(tenantId, searchQuery, {
-    topN: topK ?? 8,
-    filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
-  });
+  // A follow-up ("and for Polycab?") reaches the data engine with what it stands for.
+  const engineQuestion = searchQuery !== message ? `${message}\n(In full: ${searchQuery})` : message;
+  const [{ hits, facts }, computed] = await Promise.all([
+    retrieve(tenantId, searchQuery, {
+      topN: topK ?? 8,
+      filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
+    }),
+    tryCompute(tenantId, engineQuestion, history, generate, filters, resolved.applied.jobIds ?? []),
+  ]);
 
   // 6) Grounded generation. The ORIGINAL user `message` is the question; history
   //    is passed only for conversational coherence (see generateAnswer's
   //    grounding invariant) — answers stay grounded in the retrieved context.
-  const computed = await tryCompute(tenantId, message, history, generate, filters);
   const generation = generate
-    ? await generateAnswer(message, hits, history, facts, computed ? computedBlock(computed.tables) : "")
+    ? await generateAnswer(message, hits, history, facts, computed ? { block: computedBlock(computed), tables: computed.tables } : null)
     : { answer: null as string | null, citations: hits.map((h) => h.citation), verification: undefined };
 
   // 7) Persist both turns (user first, then assistant) so the next turn has

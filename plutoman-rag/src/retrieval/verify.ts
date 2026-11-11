@@ -108,6 +108,52 @@ export interface VerifyInput {
 
 /** Values longer than this are descriptions, not values to quote. */
 const MAX_QUOTABLE = 90;
+
+/** Words too common to prove a clause was quoted. */
+const FILLER = new Set(["the", "and", "for", "with", "per", "as", "on", "of", "in", "at", "to", "a", "an", "is", "was"]);
+
+/**
+ * The closing clause of a recorded value — the part after the last dash or
+ * semicolon — is where the inspector's verdict sits: "2.8% – above max 2%;
+ * ovality fail on sample", "60–70 microns (spec min 60); accepted". A reading
+ * given without it ("the ovality is 2.8%") is true and still misleads.
+ * Returns the words of that clause, or [] when the value has no such clause.
+ */
+export function closingClause(value: string): string[] {
+  const parts = value.split(/\s[–—-]\s|;/);
+  if (parts.length < 2) return [];
+  const tail = norm(parts[parts.length - 1]).replace(/[^a-z0-9 ]/g, " ").split(" ").filter((w) => w.length > 1 && !FILLER.has(w));
+  return tail.length >= 1 && tail.length <= 8 ? tail : [];
+}
+
+/** Is the recorded `value` quoted in `draft` closely enough (see check 3)? Pure. */
+export function quotesValue(draftRaw: string, value: string): boolean {
+  const draft = norm(draftRaw);
+  const nums = numbersIn(value);
+  // Up to 4 figures (a value, a date, a range): all of them; more: at least one.
+  const missingNumber =
+    nums.length > 0 &&
+    (nums.length <= 4 ? !nums.every((n) => hasNumber(draft, n)) : !nums.some((n) => hasNumber(draft, n)));
+  const words = valueWords(value);
+  const kept = words.filter((w) => draft.includes(w)).length;
+  const missingWords = nums.length === 0 && words.length > 0 && kept / words.length < 0.5;
+  // A bare result ("Not Ok", "Yes", "Pass") must appear as written, not as
+  // "one item did not pass" (Q23).
+  const bare = norm(value).replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+  const missingResult =
+    nums.length === 0 && words.length === 0 && bare.split(" ").length <= 3 && !containsWords(draft, bare);
+  // The verdict that closes the value must come with it.
+  const missingVerdict = closingClause(value).some((w) => (/^\d/.test(w) ? !hasNumber(draft, w) : !containsWords(draft, w)));
+  return !(missingNumber || missingWords || missingResult || missingVerdict);
+}
+
+/** Cited sources (0-based indices) whose recorded value the draft does not quote. */
+export function unquotedSources(draft: string, ordered: RetrievalHit[], cited: number[]): number[] {
+  return cited.filter((i) => {
+    const value = (ordered[i]?.answer ?? "").trim();
+    return value !== "" && value.length <= MAX_QUOTABLE && !quotesValue(draft, value);
+  });
+}
 /** Problems reported back to the model, at most. */
 const MAX_PROBLEMS = 5;
 
@@ -137,7 +183,6 @@ export function findProblems(v: VerifyInput): string[] {
   const abstains = isAbstention(v.draft) && v.cited.length === 0;
   const markerOf = new Map(v.ordered.map((h, i) => [h.id, marker(i)]));
   const citedIds = new Set(v.cited.map((i) => v.ordered[i]?.id));
-  const draft = norm(v.draft);
 
   // 1) Over-abstaining: the draft says "not recorded" although a complete list
   //    holds exactly the items the question names (Q16, Q21).
@@ -160,26 +205,8 @@ export function findProblems(v: VerifyInput): string[] {
   }
 
   // 3) Recorded values must be quoted, not summarised to a result word.
-  for (const i of v.cited) {
-    const h = v.ordered[i];
-    const value = (h?.answer ?? "").trim();
-    if (!h || !value || value.length > MAX_QUOTABLE) continue;
-    const nums = numbersIn(value);
-    // Up to 4 figures (a value, a date, a range): all of them; more: at least one.
-    const missingNumber =
-      nums.length > 0 &&
-      (nums.length <= 4 ? !nums.every((n) => hasNumber(draft, n)) : !nums.some((n) => hasNumber(draft, n)));
-    const words = valueWords(value);
-    const kept = words.filter((w) => draft.includes(w)).length;
-    const missingWords = nums.length === 0 && words.length > 0 && kept / words.length < 0.5;
-    // A bare result ("Not Ok", "Yes", "Pass") must appear as written, not as
-    // "one item did not pass" (Q23).
-    const bare = norm(value).replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
-    const missingResult =
-      nums.length === 0 && words.length === 0 && bare.split(" ").length <= 3 && !containsWords(draft, bare);
-    if (missingNumber || missingWords || missingResult) {
-      problems.push(`For [${marker(i)}] quote the recorded value exactly as written: "${value}".`);
-    }
+  for (const i of unquotedSources(v.draft, v.ordered, v.cited)) {
+    problems.push(`For [${marker(i)}] quote the recorded value exactly as written: "${(v.ordered[i].answer ?? "").trim()}".`);
   }
 
   // 4) No figure may appear that is in no source, not in the complete lists'

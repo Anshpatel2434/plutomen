@@ -45,6 +45,22 @@ export interface ItemFact {
   measurement: string | null;
   note: string | null;
   result: Result | null;
+  /** The result word as the inspector wrote it; null when the value carries none. */
+  marked: Marked | null;
+  page: string | null;
+  position: number;
+}
+
+export type Marked = "Ok" | "Not Ok" | "Attached" | "Not Attached";
+
+/** One "<number> <unit>" read from a recorded value, so quantities can be summed. */
+export interface AmountFact {
+  area: ItemFact["area"];
+  section: string | null;
+  item: string;
+  amount: number;
+  unit: string;
+  value: string;
   page: string | null;
   position: number;
 }
@@ -52,6 +68,48 @@ export interface ItemFact {
 export interface ReportFacts {
   report: ReportFact;
   items: ItemFact[];
+  amounts: AmountFact[];
+}
+
+/** The result word exactly as written ("Canopy -3mm|Not OK" -> "Not Ok"). */
+export function markedAs(value: string | null | undefined): Marked | null {
+  const v = (value ?? "").toLowerCase();
+  if (/\bnot\s*ok\b/.test(v)) return "Not Ok";
+  if (/\bnot\s+attached\b/.test(v)) return "Not Attached";
+  if (/^\s*attached\b/.test(v)) return "Attached";
+  if (/\bok\b/.test(v)) return "Ok";
+  return null;
+}
+
+/** Items whose numbers are identifiers or dates, not quantities. */
+const NOT_A_QUANTITY = /\b(date|po|sap|code|batch|serial|sl\.?\s*nos?|engineer|designation|name|size)\b/i;
+/** Words that follow a number without being its unit. */
+const NOT_A_UNIT = new Set([
+  "x", "to", "and", "or", "of", "at", "as", "per", "in", "on", "by", "the", "dated", "c", "core", "cores",
+  "both", "all", "side", "sides", "for", "is", "was", "min", "max", "avg",
+]);
+const UNIT_ALIASES: Record<string, string> = {
+  drums: "drum", no: "nos", numbers: "nos", number: "nos", pcs: "nos", pieces: "nos", units: "nos", unit: "nos",
+  m: "mtr", mtrs: "mtr", meter: "mtr", meters: "mtr", metre: "mtr", metres: "mtr",
+  "%": "percent", microns: "micron",
+};
+
+/**
+ * Every "<number> <unit>" in a recorded value: "10 Drums / 5000 mtr" ->
+ * [10 drum, 5000 mtr]; with firstOnly, "2.8% – above max 2%" -> [2.8 percent].
+ * Pure. Numbers of 7+ digits are identifiers, not amounts.
+ */
+export function parseAmounts(value: string, firstOnly = false): { amount: number; unit: string }[] {
+  const out: { amount: number; unit: string }[] = [];
+  for (const m of value.matchAll(/(?<![\w.\-/])(\d{1,3}(?:,\d{3})+|\d{1,6})(\.\d+)?\s?(%|[A-Za-zΩµ°]{1,12})/g)) {
+    const raw = m[3].toLowerCase();
+    if (NOT_A_UNIT.has(raw)) continue;
+    const amount = Number(m[1].replace(/,/g, "") + (m[2] ?? ""));
+    if (!Number.isFinite(amount)) continue;
+    out.push({ amount, unit: UNIT_ALIASES[raw] ?? raw });
+    if (firstOnly) break;
+  }
+  return out;
 }
 
 /** The chunker's verdict vocabulary -> the data engine's. */
@@ -79,6 +137,7 @@ export function buildFacts(
   pageOf: Map<string, string | null> = new Map()
 ): ReportFacts {
   const items: ItemFact[] = [];
+  const amounts: AmountFact[] = [];
   const add = (
     area: ItemFact["area"],
     section: string | null,
@@ -89,7 +148,16 @@ export function buildFacts(
     result: Result | null,
     sectionPath: string
   ): void => {
-    items.push({ area, section, item, value, measurement, note, result, page: pageOf.get(sectionPath) ?? null, position: items.length });
+    const page = pageOf.get(sectionPath) ?? null;
+    const position = items.length;
+    const marked = area === "Characteristics" || area === "Conclusion" ? markedAs(value) : null;
+    items.push({ area, section, item, value, measurement, note, result, marked, page, position });
+    // Quantities of the lot (every figure), and the reading of a check (its first figure).
+    if (value && (area === "Basic Details" ? !NOT_A_QUANTITY.test(item) : area === "Characteristics")) {
+      for (const a of parseAmounts(value, area !== "Basic Details")) {
+        amounts.push({ area, section, item, amount: a.amount, unit: a.unit, value, page, position });
+      }
+    }
   };
 
   for (const b of report.basicDetails) {
@@ -159,5 +227,6 @@ export function buildFacts(
       itemsConditional: checked.filter((i) => i.result === "CONDITIONAL").length,
     },
     items,
+    amounts,
   };
 }

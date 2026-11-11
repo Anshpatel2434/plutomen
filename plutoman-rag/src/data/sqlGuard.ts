@@ -16,7 +16,15 @@
  */
 
 /** Tables the model may read. */
-export const ALLOWED_TABLES = ["inspection_reports", "inspection_items"] as const;
+export const ALLOWED_TABLES = [
+  "inspection_reports",
+  "inspection_items",
+  "inspection_amounts",
+  // Standard measures (db/migrations/010_measures.sql).
+  "checks",
+  "report_summary",
+  "section_summary",
+] as const;
 
 /** Rows returned to the model and the caller, at most. */
 export const MAX_ROWS = 200;

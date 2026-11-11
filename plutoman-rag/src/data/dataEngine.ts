@@ -56,6 +56,8 @@ export interface DataCatalog {
   reportTypes: { name: string; reports: number }[];
   /** report type -> area / section -> item names. */
   items: { reportType: string; group: string; items: string[] }[];
+  /** Items of the lot that carry quantities, with the units they are recorded in. */
+  quantities: { item: string; units: string[] }[];
 }
 
 /** Item names listed in the prompt, at most (the rest are still queryable). */
@@ -84,6 +86,13 @@ export async function loadDataCatalog(tenantId: string): Promise<DataCatalog> {
           GROUP BY 1, 2, 3 ORDER BY 1, 2, 3`,
         [tenantId]
       );
+      const quantities = await c.query<{ item: string; units: string[] }>(
+        `SELECT item, array_agg(DISTINCT unit ORDER BY unit) AS units
+           FROM inspection_amounts
+          WHERE tenant_id = $1 AND area = 'Basic Details'
+          GROUP BY 1 ORDER BY 1 LIMIT 40`,
+        [tenantId]
+      );
       let budget = MAX_CATALOG_ITEMS;
       const groups = items.rows.map((r) => {
         const take = r.items.slice(0, Math.max(0, budget));
@@ -98,6 +107,7 @@ export async function loadDataCatalog(tenantId: string): Promise<DataCatalog> {
         sites: (await by("site")).map((s) => s.name),
         reportTypes: await by("report_type"),
         items: groups.filter((g) => g.items.length > 0),
+        quantities: quantities.rows,
       };
     })
   );
@@ -133,8 +143,30 @@ TABLE inspection_items  (one row per item recorded in a report)
   measurement  text
   note         text  the inspector's note
   result       text  'PASS' | 'FAIL' | 'CONDITIONAL'; NULL when the item is a fact, not a check
+  marked       text  the result word exactly as written: 'Ok' | 'Not Ok' | 'Attached' | 'Not Attached'; NULL when none
   page         text  printed page of the PDF report
-  position     integer  order inside the report`;
+  position     integer  order inside the report
+
+STANDARD MEASURES (ready-made and already correct: use them instead of working a figure out yourself)
+
+VIEW report_summary  (one row per report: anything counted, ranked or compared per report, vendor, site or type)
+  every column of inspection_reports except the items_* tallies, plus
+  checks             integer  how many items were checked in the report
+  passed, failed, conditional   integer
+  pass_rate_percent  numeric  100 * passed / checks
+  marked_not_ok      integer  checks the inspector wrote 'Not Ok' against
+
+VIEW section_summary  (one row per report and section)
+  report_id, job_id, report_type, site, vendor, inspection_date, section,
+  checks, passed, failed, conditional, pass_rate_percent, marked_not_ok
+
+VIEW checks  (one row per checked item; the same columns as inspection_items without area)
+  report_id, job_id, report_type, site, vendor, inspection_date, section, item, value, measurement, note, result, marked, page, position
+
+TABLE inspection_amounts  (one row per quantity or reading, as a NUMBER that can be summed and compared)
+  report_id, job_id, report_type, site, vendor, inspection_date, area, section, item, value, page, position
+  amount       numeric  e.g. 5000
+  unit         text     lower case, singular: 'nos', 'drum', 'mtr', 'mm', 'percent', ...`;
 
 function renderCatalog(cat: DataCatalog): string {
   const lines = [
@@ -142,6 +174,7 @@ function renderCatalog(cat: DataCatalog): string {
     `Vendors: ${cat.vendors.map((v) => `'${v.name}' (${v.reports})`).join(", ") || "none"}`,
     `Sites: ${cat.sites.map((s) => `'${s}'`).join(", ") || "none"}`,
     `Report types: ${cat.reportTypes.map((t) => `'${t.name}' (${t.reports})`).join(", ") || "none"}`,
+    `Quantities in inspection_amounts (item: units): ${(cat.quantities ?? []).map((q) => `'${q.item}': ${q.units.join(", ")}`).join("; ") || "none"}`,
     "Items, by report type and area / section:",
   ];
   let current = "";
@@ -179,12 +212,18 @@ export function planSystemPrompt(cat: DataCatalog, today: string): string {
     "Use more than one query only for an overview (for example: the totals, the breakdown, the exceptions).",
     "",
     "RULES",
-    "1. Each query is one SELECT (WITH is allowed) over inspection_reports and inspection_items only. No comments, no semicolons.",
+    "1. Each query is one SELECT (WITH is allowed) over the tables and views above only. No comments, no semicolons.",
     "2. Match names loosely and case-insensitively: vendor ILIKE '%polycab%'. Only use names from the lists above.",
     "3. When rows are items, select report_id, job_id, vendor, item, value, note, result, page so each row can be cited.",
     "   When rows are reports, select report_id, job_id, vendor and the columns asked about.",
-    "4. \"Did not pass\" means result IN ('FAIL', 'CONDITIONAL'). Items with result NULL were not checks: leave them out of counts of checks.",
-    "5. A rate is ROUND(100.0 * part / NULLIF(whole, 0), 1). Counting items per report or vendor: use the tally columns of inspection_reports when they fit.",
+    "4. Three different things, never mixed:",
+    "   - \"marked Not Ok\", \"Not Ok\", \"not okay\": the word the inspector wrote. marked = 'Not Ok' (in checks), or marked_not_ok (in the summaries).",
+    "   - \"failed\", \"rejected\": result = 'FAIL'.",
+    "   - \"did not pass\", \"problems\", \"issues\", \"deviations\", \"below spec\", \"not clear\": result IN ('FAIL', 'CONDITIONAL').",
+    "   Count checks in the view checks (it leaves out items that were not checks).",
+    "5. Never JOIN. Every table and view already carries report_id, job_id, vendor, site, report_type and inspection_date;",
+    "   to restrict one by another use report_id IN (SELECT report_id FROM ...). Tallies and rates come from report_summary or",
+    "   section_summary. Over several reports, add the columns up: ROUND(100.0 * SUM(passed) / NULLIF(SUM(checks), 0), 1).",
     "6. Whenever the question is about a lot's outcome (cleared, rejected, dispatch, accepted, passed overall), select",
     "   report_id, job_id, vendor, outcome_summary, outcome_conflict and items_failed. Never judge an outcome from one",
     "   conclusion field alone: the three can disagree. Filter or count with the *_result columns, show outcome_summary.",
@@ -197,7 +236,55 @@ export function planSystemPrompt(cat: DataCatalog, today: string): string {
     "   a measured figure) is in value or note: filter it with value ILIKE '%...%'.",
     "10. Prefer selecting the matching rows to count(*) alone: you are told how many rows there are, and each row can be",
     "    cited. Use count or sum when grouping (per vendor, per report, per section) or when the rows would exceed 50.",
-    `11. Today is ${today}.`,
+    "11. Totals of quantities (how much, how many units, add up, in total): SUM(amount) FROM inspection_amounts, with",
+    "    GROUP BY unit, filtered by a word of the item name (item ILIKE '%offered%'). Never add up text values yourself.",
+    "12. \"How many of them / of each\" needs the whole as well as the part: select both (COUNT(*) AS reports and",
+    "    COUNT(*) FILTER (WHERE ...) AS matching), so the answer can say \"2 of 5\".",
+    "13. \"Shared by / under two different ...\": GROUP BY the shared value HAVING COUNT(DISTINCT the other column) > 1.",
+    "14. When the user message lists REPORTS MATCHING THE DETAILS IN THE QUESTION, those are the reports meant:",
+    "    filter with job_id IN (...) exactly as listed.",
+    `15. Today is ${today}.`,
+    "",
+    "EXAMPLES (the pattern matters, not the names)",
+    "Q: How many checks are marked Not Ok in the Acme report?",
+    "TITLE: Checks marked Not Ok in the Acme report",
+    "```sql",
+    "SELECT report_id, job_id, vendor, section, item, value, note, result, page FROM checks WHERE vendor ILIKE '%acme%' AND marked = 'Not Ok' ORDER BY report_id, position",
+    "```",
+    "Q: What is the pass rate on Acme's checks?",
+    "TITLE: Pass rate of Acme's checks",
+    "```sql",
+    "SELECT vendor, COUNT(*) AS reports, SUM(checks) AS checks, SUM(passed) AS passed, ROUND(100.0 * SUM(passed) / NULLIF(SUM(checks), 0), 1) AS pass_rate_percent FROM report_summary WHERE vendor ILIKE '%acme%' GROUP BY vendor",
+    "```",
+    "Q: Which Acme lot is the worst?",
+    "TITLE: Acme lots, worst first",
+    "```sql",
+    "SELECT report_id, job_id, vendor, checks, passed, failed, conditional, marked_not_ok, pass_rate_percent, outcome_summary, outcome_conflict FROM report_summary WHERE vendor ILIKE '%acme%' ORDER BY failed + conditional DESC, pass_rate_percent LIMIT 10",
+    "```",
+    "Q: Total quantity Acme offered across its lots?",
+    "TITLE: Total offered by Acme, per unit",
+    "```sql",
+    "SELECT unit, SUM(amount) AS total, COUNT(DISTINCT report_id) AS reports FROM inspection_amounts WHERE vendor ILIKE '%acme%' AND item ILIKE '%offered%' GROUP BY unit ORDER BY unit",
+    "```",
+    "TITLE: What each Acme lot offered",
+    "```sql",
+    "SELECT report_id, job_id, vendor, item, value, page FROM inspection_items WHERE vendor ILIKE '%acme%' AND item ILIKE '%offered%' ORDER BY report_id",
+    "```",
+    "Q: For each report type, how many reports concluded with test results Ok?",
+    "TITLE: Reports with test results Ok, per report type",
+    "```sql",
+    "SELECT report_type, COUNT(*) AS reports, COUNT(*) FILTER (WHERE test_results_result = 'PASS') AS test_results_ok FROM report_summary GROUP BY report_type ORDER BY report_type",
+    "```",
+    "Q: Does any batch number appear under two different vendors?",
+    "TITLE: Batch numbers recorded under more than one vendor",
+    "```sql",
+    "SELECT value AS batch, COUNT(DISTINCT vendor) AS vendors, STRING_AGG(DISTINCT vendor, '; ') AS vendor_names, STRING_AGG(DISTINCT job_id, ', ') AS jobs FROM inspection_items WHERE item ILIKE '%batch%' GROUP BY value HAVING COUNT(DISTINCT vendor) > 1",
+    "```",
+    "Q: Which reports did R. Sharma handle, and how did they conclude?",
+    "TITLE: Reports handled by R. Sharma and their outcome",
+    "```sql",
+    "SELECT report_id, job_id, vendor, inspection_date, outcome_summary, outcome_conflict, failed FROM report_summary WHERE report_id IN (SELECT report_id FROM inspection_items WHERE area = 'Basic Details' AND value ILIKE '%sharma%') ORDER BY inspection_date",
+    "```",
   ].join("\n");
 }
 
@@ -386,7 +473,7 @@ export async function answerWithData(
   history: HistoryTurn[] = []
 ): Promise<DataAnswer | null> {
   const computed = await computeTables(tenantId, question, history);
-  if (!computed) return null;
+  if (!computed || computed.tables.length === 0) return null;
   const { tables, reportsTotal } = computed;
 
   const results = tables.map((t) => renderTable(t)).join("\n\n");
@@ -422,9 +509,87 @@ export async function answerWithData(
   };
 }
 
-/** The block the search path's answer prompt shows the model (see generate.ts rule 13). */
-export function computedBlock(tables: DataTable[]): string {
-  return ["COMPUTED RESULTS (calculated by the database from every matching record; exact and complete):", ...tables.map((t) => renderTable(t))].join("\n");
+/**
+ * Assumptions in the question that the workspace contradicts ("of our 20
+ * reports" when there are 11; "since Siemens has the most reports" when it has
+ * one). Checked in code, because a model answering the question it was asked
+ * tends to accept what the question takes for granted. Pure.
+ */
+export function premiseNotes(question: string, cat: DataCatalog): string[] {
+  const notes: string[] = [];
+  const q = question.toLowerCase();
+  const total = /\b(?:our|the|all|these|those|of)\s+(\d{1,5})\s+(?:inspection\s+)?(?:reports|inspections|lots)\b/.exec(q);
+  if (total && Number(total[1]) !== cat.reports) {
+    notes.push(`The question assumes ${total[1]} reports; the records hold ${cat.reports}. Say so before answering.`);
+  }
+  const top = [...cat.vendors].sort((a, b) => b.reports - a.reports);
+  if (top.length > 1 && /\b(most|highest number of|largest number of|maximum)\b[^.?]{0,25}\b(reports|inspections|lots)\b/.test(q)) {
+    const named = cat.vendors.find((v) => {
+      const key = v.name.toLowerCase().split(/[^a-z0-9&]+/).find((w) => w.length >= 3);
+      return key !== undefined && q.split(/[^a-z0-9&]+/).includes(key);
+    });
+    if (named && named.reports < top[0].reports) {
+      notes.push(
+        `The question assumes ${named.name} has the most reports; it has ${named.reports}, and ${top[0].name} has the most (${top[0].reports}). Say so before answering.`
+      );
+    }
+  }
+  return notes;
+}
+
+/** The workspace at a glance, so the answer can check what the question takes for granted. */
+function workspaceFacts(cat: DataCatalog): string {
+  return [
+    `WORKSPACE FACTS: ${cat.reports} reports in all.`,
+    `Reports per vendor: ${cat.vendors.map((v) => `${v.name} ${v.reports}`).join("; ")}.`,
+    `Reports per type: ${cat.reportTypes.map((t) => `${t.name} ${t.reports}`).join("; ")}.`,
+  ].join(" ");
+}
+
+/** What the engine worked out for a question. */
+export interface Computed {
+  tables: DataTable[];
+  /** Corrections to what the question takes for granted. */
+  notes: string[];
+  reportsTotal: number;
+  catalog: DataCatalog;
+}
+
+/** True when there is something to show the answer step. */
+export function hasComputed(c: Computed | null): c is Computed {
+  return c !== null && (c.tables.length > 0 || c.notes.length > 0);
+}
+
+/** The block the search path's answer prompt shows the model (see generate.ts COMPUTED_RULE). */
+export function computedBlock(c: Computed): string {
+  const lines: string[] = [];
+  if (c.notes.length > 0) lines.push("CHECK THE QUESTION'S ASSUMPTIONS:", ...c.notes.map((n) => `- ${n}`), "");
+  lines.push(workspaceFacts(c.catalog), "");
+  if (c.tables.length > 0) {
+    lines.push(
+      "COMPUTED RESULTS (calculated by the database from every matching record; exact and complete):",
+      ...c.tables.map((t) => renderTable(t))
+    );
+  }
+  return lines.join("\n");
+}
+
+/** A bare count over records: the rows behind it are fetched too, so the answer can list what it counts. */
+const BARE_COUNT = /^select\s+count\(\s*\*\s*\)(?:\s+as\s+\w+)?\s+from\s+(checks|inspection_items)\s+(where\b[\s\S]+)$/i;
+
+export function rowsBehindCount(sql: string): string | null {
+  const m = BARE_COUNT.exec(sql.trim().replace(/;\s*$/, ""));
+  if (!m || /\bgroup\s+by\b|\bhaving\b|\blimit\b|\border\s+by\b/i.test(m[2])) return null;
+  return `SELECT report_id, job_id, vendor, section, item, value, note, result, page FROM ${m[1]} ${m[2]} ORDER BY report_id, position`;
+}
+
+/** Words that ask for something counted, ranked or compared. */
+const AGGREGATE_WORDS =
+  /\b(how many|how much|number of|count|total|sum|add up|average|mean|rate|percent|percentage|share|ratio|most|least|worst|best|highest|lowest|compare|comparison|versus|vs|across|each|every|all|any|which|list|overall|overview|summary|summari[sz]e|trend|rank|top)\b|%/i;
+
+/** A question about one named report that asks for nothing counted or compared: search answers it. */
+export function isPlainLookup(question: string, jobIds: string[]): boolean {
+  return jobIds.length === 1 && !AGGREGATE_WORDS.test(question);
 }
 
 /** How many reports the result rows name (null = an aggregate with no report ids). */
@@ -441,20 +606,36 @@ export function coverageOf(tables: DataTable[], reportsTotal: number): DataAnswe
 
 /**
  * Steps 1 and 2 of the engine: have the model write the queries and run them.
- * Null when the question is a lookup or nothing trustworthy was found.
+ * `tables` is empty when the question is a lookup or nothing trustworthy was
+ * found; `notes` may still correct what the question takes for granted. Null
+ * when there are no inspection records at all.
+ *
+ * @param jobIds reports the question was resolved to (entities.ts /
+ *               details.ts); the queries are told to use them.
  */
 export async function computeTables(
   tenantId: string,
   question: string,
-  history: HistoryTurn[] = []
-): Promise<{ tables: DataTable[]; reportsTotal: number } | null> {
+  history: HistoryTurn[] = [],
+  jobIds: string[] = []
+): Promise<Computed | null> {
   const catalog = await loadDataCatalog(tenantId);
   if (catalog.reports === 0) return null; // nothing to count
+  const notes = premiseNotes(question, catalog);
+  const none: Computed = { tables: [], notes, reportsTotal: catalog.reports, catalog };
+  // One named report, nothing counted or compared: no query to write.
+  if (isPlainLookup(question, jobIds)) return none;
 
   const system = planSystemPrompt(catalog, new Date().toISOString().slice(0, 10));
-  const ask = [...historyBlock(history), `QUESTION: ${question}`].join("\n");
+  const ask = [
+    ...historyBlock(history),
+    ...(jobIds.length > 0 && jobIds.length <= 12
+      ? [`REPORTS MATCHING THE DETAILS IN THE QUESTION: job_id IN (${jobIds.map((j) => `'${j.replace(/'/g, "")}'`).join(", ")})`]
+      : []),
+    `QUESTION: ${question}`,
+  ].join("\n");
   const plan = parsePlan(await chatComplete({ system, user: ask, maxTokens: DATA_MAX_TOKENS, numCtx: 8192, model: model() }));
-  if (plan.route === "lookup") return null;
+  if (plan.route === "lookup") return none;
 
   // Run each query; a refused or failing one gets ONE correction with the reason.
   const tables: DataTable[] = [];
@@ -508,10 +689,22 @@ export async function computeTables(
       }
     }
     if (table) tables.push({ title: q.title, sql, ...table });
+    // A bare count: fetch the records it counted, so the answer lists exactly those.
+    const behind = table && !foundNothing(table) && plan.queries.length === 1 ? rowsBehindCount(sql) : null;
+    if (behind) {
+      try {
+        const rows = await runSql(tenantId, behind);
+        if (rows.rows.length > 0 && rows.rows.length <= MAX_ROWS_IN_PROMPT) {
+          tables.push({ title: `${q.title} - the matching records`, sql: behind, ...rows });
+        }
+      } catch {
+        // the count stands on its own
+      }
+    }
   }
   // Nothing ran, or nothing was found at all: let search try. "None" from a
   // query is not trusted on its own (it may be a lookup after all, be about an
   // uploaded document, or the filter may simply not match the data).
-  if (tables.length === 0 || tables.every((t) => foundNothing(t))) return null;
-  return { tables, reportsTotal: catalog.reports };
+  if (tables.length === 0 || tables.every((t) => foundNothing(t))) return none;
+  return { tables, notes, reportsTotal: catalog.reports, catalog };
 }

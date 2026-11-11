@@ -31,7 +31,7 @@ export interface ChatRequest {
  * asks for a different num_ctx, so mixing sizes (4096 for answers, 8192 for
  * the data engine) cost a reload on almost every question.
  */
-const NUM_CTX = 8192;
+export const NUM_CTX = 8192;
 
 interface OllamaChatResponse {
   message: { role: string; content: string };

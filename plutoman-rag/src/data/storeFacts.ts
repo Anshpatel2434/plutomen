@@ -8,7 +8,12 @@ import { ReportFacts } from "./buildFacts";
 
 const ITEM_COLUMNS = [
   "document_id", "tenant_id", "report_id", "job_id", "report_type", "site", "vendor", "inspection_date",
-  "area", "section", "item", "value", "measurement", "note", "result", "page", "position",
+  "area", "section", "item", "value", "measurement", "note", "result", "marked", "page", "position",
+] as const;
+
+const AMOUNT_COLUMNS = [
+  "document_id", "tenant_id", "report_id", "job_id", "report_type", "site", "vendor", "inspection_date",
+  "area", "section", "item", "amount", "unit", "value", "page", "position",
 ] as const;
 
 /**
@@ -41,13 +46,27 @@ export async function replaceFacts(
     ]
   );
 
+  // Amounts cascade from the report row too (deleted above with it).
+  if (facts.amounts.length > 0) {
+    const m = AMOUNT_COLUMNS.length;
+    const amountValues: unknown[] = [];
+    const amountRows = facts.amounts.map((a, i) => {
+      amountValues.push(
+        documentId, tenantId, r.reportId, r.jobId, r.reportType, r.site, r.vendor, r.inspectionDate,
+        a.area, a.section, a.item, a.amount, a.unit, a.value, a.page, a.position
+      );
+      return `(${AMOUNT_COLUMNS.map((_, c) => `$${i * m + c + 1}`).join(", ")})`;
+    });
+    await client.query(`INSERT INTO inspection_amounts (${AMOUNT_COLUMNS.join(", ")}) VALUES ${amountRows.join(", ")}`, amountValues);
+  }
+
   if (facts.items.length === 0) return;
   const n = ITEM_COLUMNS.length;
   const values: unknown[] = [];
   const rows = facts.items.map((it, i) => {
     values.push(
       documentId, tenantId, r.reportId, r.jobId, r.reportType, r.site, r.vendor, r.inspectionDate,
-      it.area, it.section, it.item, it.value, it.measurement, it.note, it.result, it.page, it.position
+      it.area, it.section, it.item, it.value, it.measurement, it.note, it.result, it.marked, it.page, it.position
     );
     return `(${ITEM_COLUMNS.map((_, c) => `$${i * n + c + 1}`).join(", ")})`;
   });

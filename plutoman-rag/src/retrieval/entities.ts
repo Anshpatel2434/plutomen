@@ -21,6 +21,7 @@
 import { withTenantRead } from "../db";
 import { getTenantDerived } from "../cache";
 import { RetrievalFilters } from "./hybrid";
+import { loadReportDetails, matchDetails, ReportDetail } from "./details";
 
 /** What a tenant has indexed, i.e. the vocabulary entities are resolved against. */
 export interface EntityCatalog {
@@ -163,9 +164,39 @@ export async function loadCatalog(tenantId: string): Promise<EntityCatalog> {
   );
 }
 
+/**
+ * Narrow a match by the details the text gives about the report (quantity, PO
+ * number, engineer — see details.ts). Applies only when no Job ID / POID is
+ * named, and inside the vendor / report type already matched. Pure.
+ */
+export function narrowByDetails(text: string, m: EntityMatch, reports: ReportDetail[]): EntityMatch {
+  if (m.jobIds.length > 0 || m.poids.length > 0 || reports.length === 0) return m;
+  const inScope = reports.filter(
+    (r) =>
+      (m.vendors.length === 0 || (r.vendor !== null && m.vendors.includes(r.vendor))) &&
+      (m.reportTypes.length !== 1 || r.reportType === m.reportTypes[0])
+  );
+  const fit = matchDetails(text, inScope.length > 0 ? inScope : reports);
+  if (!fit) return m;
+  const jobIds = fit.map((r) => r.jobId).filter((x): x is string => !!x);
+  if (jobIds.length === fit.length) return { ...m, jobIds };
+  const poids = fit.map((r) => r.reportId).filter((id) => id.startsWith("POID-"));
+  return poids.length === fit.length ? { ...m, poids } : m;
+}
+
+/** Report details, or none when they cannot be read (never blocks retrieval). */
+async function detailsOf(tenantId: string): Promise<ReportDetail[]> {
+  try {
+    return await loadReportDetails(tenantId);
+  } catch {
+    return [];
+  }
+}
+
 /** Resolve entities in a single query (the /search path). */
 export async function resolveEntities(tenantId: string, text: string): Promise<ResolvedEntities> {
-  return toFilters(matchEntities(text, await loadCatalog(tenantId)));
+  const m = matchEntities(text, await loadCatalog(tenantId));
+  return toFilters(narrowByDetails(text, m, await detailsOf(tenantId)));
 }
 
 /**
@@ -187,7 +218,10 @@ export async function resolveChatEntities(
   message: string,
   rewritten: string
 ): Promise<ResolvedEntities> {
-  return toFilters(matchChatEntities(message, rewritten, await loadCatalog(tenantId)));
+  const m = matchChatEntities(message, rewritten, await loadCatalog(tenantId));
+  // Details count from the rewrite too ("same for the 10 drum polycab?"), unless the message points away.
+  const text = CONTRASTIVE.test(message) || rewritten === message ? message : `${message} ${rewritten}`;
+  return toFilters(narrowByDetails(text, m, await detailsOf(tenantId)));
 }
 
 /** Pure core of resolveChatEntities (unit-testable without a database). */

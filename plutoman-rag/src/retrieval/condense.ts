@@ -15,6 +15,7 @@
  */
 import axios from "axios";
 import { config } from "../config";
+import { NUM_CTX } from "../llm";
 import { HistoryTurn } from "../conversation";
 
 interface OllamaGenerateResponse {
@@ -66,6 +67,9 @@ export async function condenseQuery(
         model: config.GEN_MODEL,
         prompt,
         stream: false,
+        // The same context size as every other call: a different one makes
+        // Ollama reload the model (tens of seconds on every follow-up).
+        options: { temperature: 0, num_ctx: NUM_CTX, num_predict: 160 },
       }
     );
 
