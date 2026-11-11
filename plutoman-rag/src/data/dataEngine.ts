@@ -33,6 +33,8 @@ export interface HistoryTurn {
 export interface DataTable extends SqlTable {
   title: string;
   sql: string;
+  /** Background for the answer (not something the answer must reproduce row by row). */
+  info?: boolean;
 }
 
 export interface DataAnswer {
@@ -202,6 +204,7 @@ export function planSystemPrompt(cat: DataCatalog, today: string): string {
     "Reply with the single word LOOKUP only when the question:",
     "- is about ONE report and asks for one or two values or notes recorded in it, or",
     "- asks what a term means, or how a procedure / SOP / other document says to do something, or",
+    "- asks how a report is laid out: which sections or parts it contains, in what order, what its contents page lists, or",
     "- is not about the inspection records at all.",
     "Every other question is answered with SQL: anything about several reports, a whole section, a vendor, a site or",
     "a person across reports; anything asking which, how many, list, all, any, compare, most, least, rate, share,",
@@ -238,6 +241,8 @@ export function planSystemPrompt(cat: DataCatalog, today: string): string {
     "    cited. Use count or sum when grouping (per vendor, per report, per section) or when the rows would exceed 50.",
     "11. Totals of quantities (how much, how many units, add up, in total): SUM(amount) FROM inspection_amounts, with",
     "    GROUP BY unit, filtered by a word of the item name (item ILIKE '%offered%'). Never add up text values yourself.",
+    "    Always add a second query that lists each lot's own recorded value (the rows of inspection_items), so every",
+    "    lot's quantity is shown next to the total.",
     "12. \"How many of them / of each\" needs the whole as well as the part: select both (COUNT(*) AS reports and",
     "    COUNT(*) FILTER (WHERE ...) AS matching), so the answer can say \"2 of 5\".",
     "13. \"Shared by / under two different ...\": GROUP BY the shared value HAVING COUNT(DISTINCT the other column) > 1.",
@@ -587,6 +592,27 @@ export function rowsBehindCount(sql: string): string | null {
 const AGGREGATE_WORDS =
   /\b(how many|how much|number of|count|total|sum|add up|average|mean|rate|percent|percentage|share|ratio|most|least|worst|best|highest|lowest|compare|comparison|versus|vs|across|each|every|all|any|which|list|overall|overview|summary|summari[sz]e|trend|rank|top)\b|%/i;
 
+/** A question about how a lot came out: cleared, rejected, free to dispatch. */
+const OUTCOME_WORDS =
+  /\b(clear(ed|ance)?|dispatch(ed)?|reject(ed|ion)?|accept(ed|able|ance)?|approv(ed|al)|releas(e|ed)|free to|leave the|ship(ped|ment)?|outcome|conclusion|concluded?|decision|verdict|go ahead|on hold|pass(ed)? overall|overall result)\b/i;
+
+/**
+ * The summary row of the one report an outcome question is about. A lot's
+ * three conclusions can disagree; the row carries all of them and says so
+ * (outcome_conflict), which a search for "cleared" alone does not.
+ */
+async function outcomeOf(tenantId: string, jobId: string): Promise<DataTable | null> {
+  const sql =
+    "SELECT report_id, job_id, vendor, outcome_summary, outcome_conflict, checks, passed, failed, conditional " +
+    `FROM report_summary WHERE job_id = '${jobId.replace(/[^A-Za-z0-9_-]/g, "")}'`;
+  try {
+    const t = await runSql(tenantId, sql);
+    return t.rows.length === 1 ? { title: "The report's own conclusion (all three fields) and tally", sql, info: true, ...t } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A question about one named report that asks for nothing counted or compared: search answers it. */
 export function isPlainLookup(question: string, jobIds: string[]): boolean {
   return jobIds.length === 1 && !AGGREGATE_WORDS.test(question);
@@ -623,8 +649,12 @@ export async function computeTables(
   if (catalog.reports === 0) return null; // nothing to count
   const notes = premiseNotes(question, catalog);
   const none: Computed = { tables: [], notes, reportsTotal: catalog.reports, catalog };
-  // One named report, nothing counted or compared: no query to write.
-  if (isPlainLookup(question, jobIds)) return none;
+  // One named report, nothing counted or compared: no query to write. An
+  // outcome question still gets that report's whole conclusion.
+  if (isPlainLookup(question, jobIds)) {
+    const outcome = OUTCOME_WORDS.test(question) ? await outcomeOf(tenantId, jobIds[0]) : null;
+    return outcome ? { ...none, tables: [outcome] } : none;
+  }
 
   const system = planSystemPrompt(catalog, new Date().toISOString().slice(0, 10));
   const ask = [

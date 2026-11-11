@@ -82,6 +82,7 @@ export const SYSTEM_PROMPT = [
 export const COMPUTED_RULE = [
   "13. COMPUTED RESULTS, when given, were calculated by the database from every matching record of every report, so their counts, totals and lists are exact and complete. For questions about several reports, or asking how many, which, compare, most, least, rate or for an overview, answer from the COMPUTED RESULTS and name each report by the report id and job id written there. Use the SOURCES to quote recorded wording and for anything the COMPUTED RESULTS do not cover. If the COMPUTED RESULTS do not fit the QUESTION, ignore them.",
   "14. The SOURCES are only a sample of the records. Never count or total them yourself: every count, total, rate and complete list comes from the COMPUTED RESULTS, and a list in the COMPUTED RESULTS is given in full, one line per record.",
+  "16. When a COMPUTED RESULTS row has outcome_conflict true, the report's own conclusions disagree: give each of them as written in outcome_summary, say that the report does not resolve it, and do not answer with a plain yes or no.",
   "15. If CHECK THE QUESTION'S ASSUMPTIONS or WORKSPACE FACTS show that the QUESTION takes something for granted that is not so, begin by saying what is actually the case, then answer.",
 ].join("\n");
 
@@ -89,8 +90,24 @@ export const COMPUTED_RULE = [
 export interface ComputedInput {
   /** The text shown to the model. */
   block: string;
-  /** The tables behind it, for checking the answer against them. */
-  tables: CheckTable[];
+  /** The tables behind it, for checking the answer against them (`info` tables are not checked). */
+  tables: (CheckTable & { info?: boolean })[];
+}
+
+/** A question that asks for the rules, or tells the assistant to set the reports aside. */
+const OVERRIDE_Q =
+  /\b(system|your)\s+(instructions?|prompt|rules)\b|\bignore\s+(the|all|any|your|previous|prior)\s+(inspection\s+)?(reports?|records?|documents?|sources?|instructions?|rules|above)\b|\b(admin|developer|debug)\s+mode\b|\bsystem\s+override\b/i;
+/** An answer that declines something. */
+const DECLINES = /\b(can't|cannot|can not|unable|not able|won't|will not)\b/i;
+const DECLINE_LINE = "I can't share my instructions or set the inspection reports aside.";
+
+/**
+ * An override attempt must be visibly declined, even when the rest of the
+ * question is answered (rule 10): the answer says so in its first sentence.
+ */
+export function declineOverride(query: string, answer: string): string {
+  if (!OVERRIDE_Q.test(query) || DECLINES.test(answer)) return answer;
+  return `${DECLINE_LINE} From the reports: ${answer.trim()}`;
 }
 
 /** What the user sees if an answer would have exposed the rules. */
@@ -205,7 +222,8 @@ export async function generateAnswer(
 
   const ordered = groupByReport(hits);
   const block = computed?.block ?? "";
-  const tables = computed?.tables ?? [];
+  // Background tables inform the answer; only the others must be reproduced in it.
+  const tables = (computed?.tables ?? []).filter((t) => !t.info);
   const user = buildUserMessage(query, ordered, history, facts, block);
   // Answers built on computed tables list more (every report, every failure).
   const maxTokens = block ? 1200 : undefined;
@@ -283,6 +301,6 @@ export async function generateAnswer(
   // Citations = the sources the answer actually cites; markers become labels.
   const { text, cited } = renderCitations(final, ordered);
   // Lists, counts and figures are made to agree with the computed tables.
-  const answer = repairFromTables(query, stripLeftoverMarkers(text), tables);
+  const answer = declineOverride(query, repairFromTables(query, stripLeftoverMarkers(text), tables));
   return { answer, citations: citedSources(ordered, cited), verification };
 }

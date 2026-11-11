@@ -14,6 +14,7 @@
  * Pure: no LLM, no database.
  */
 import { SqlTable } from "./runSql";
+import { quotesValue } from "../retrieval/verify";
 
 export interface CheckTable extends SqlTable {
   title: string;
@@ -85,6 +86,17 @@ export function missingRows(answer: string, t: SqlTable): Record<string, unknown
   return t.rows.filter((r) => !mentions(sq, answer, r, needId, needItem));
 }
 
+/** Records whose recorded value or note the answer leaves out (small lists only). */
+export function unquotedRows(answer: string, t: SqlTable): Record<string, unknown>[] {
+  if (!isRecordList(t) || t.rows.length === 0 || t.rows.length > 10) return [];
+  return t.rows.filter((r) =>
+    ["value", "note"].some((c) => {
+      const v = t.columns.includes(c) ? text(r[c]) : "";
+      return v !== "" && v.length <= 90 && !quotesValue(answer, v);
+    })
+  );
+}
+
 /** The question asks for a count or a total. */
 export const ASKS_COUNT = /\bhow many\b|\bnumber of\b|\bcount\b|\btotal\b|\badd up\b|\bsum\b|\bhow much\b|\bin all\b|\baltogether\b/i;
 
@@ -128,6 +140,13 @@ export function tableProblems(question: string, answer: string, tables: CheckTab
     if (isRecordList(t)) {
       const n = t.rows.length;
       if (n === 0 || n > MAX_LISTED) continue;
+      const unquoted = unquotedRows(answer, t);
+      if (unquoted.length > 0) {
+        problems.push(
+          `Give what the report recorded for these records of the COMPUTED RESULTS, value and note, exactly as written: ` +
+            unquoted.slice(0, 4).map((r) => rowLine(t, r)).join(" ;; ")
+        );
+      }
       const missing = missingRows(answer, t);
       if (missing.length > 0) {
         problems.push(
@@ -136,15 +155,19 @@ export function tableProblems(question: string, answer: string, tables: CheckTab
             ". Include every record of the COMPUTED RESULTS."
         );
       }
-      const wrong = statedTotals(answer).filter((x) => x !== n);
-      if (asksCount && tables.filter(isRecordList).length === 1) {
+      // A total of quantities (given by a totals table) is not a count of records.
+      const computedFigures = new Set(tables.filter((x) => !isRecordList(x)).flatMap(figures).map((f) => Number(f)));
+      const wrong = statedTotals(answer).filter((x) => x !== n && !computedFigures.has(x));
+      // The row count is the answer to "how many" only when no totals table gives it.
+      const onlyLists = tables.every(isRecordList);
+      if (asksCount && tables.filter(isRecordList).length === 1 && (onlyLists || computedFigures.has(n))) {
         if (wrong.length > 0) {
           contradicts = true;
           problems.push(
             `Your answer gives a total of ${wrong[0]}, but the COMPUTED RESULTS hold ${n} matching records. ` +
               "The SOURCES are only a sample: take the count and the list from the COMPUTED RESULTS."
           );
-        } else if (!statesNumber(answer, n)) {
+        } else if (onlyLists && !statesNumber(answer, n)) {
           problems.push(`The question asks for a count: state the total, ${n}, as given by the COMPUTED RESULTS.`);
         }
       }
@@ -220,8 +243,8 @@ export function repairFromTables(question: string, answer: string, tables: Check
   const asksCount = ASKS_COUNT.test(question);
   for (const t of lists) {
     const n = t.rows.length;
-    if (missingRows(answer, t).length > 0) add.push(`Complete list from the records — ${renderList(t)}`);
-    else if (asksCount && lists.length === 1 && !statesNumber(answer, n)) add.push(`Total: ${n}.`);
+    if (missingRows(answer, t).length > 0 || unquotedRows(answer, t).length > 0) add.push(`Complete list from the records — ${renderList(t)}`);
+    else if (asksCount && lists.length === 1 && totals.length === 0 && tables.every(isRecordList) && !statesNumber(answer, n)) add.push(`Total: ${n}.`);
   }
   for (const t of totals) {
     if ([...new Set(figures(t))].some((f) => !statesNumber(answer, f))) add.push(`From the records — ${renderTotals(t)}`);
