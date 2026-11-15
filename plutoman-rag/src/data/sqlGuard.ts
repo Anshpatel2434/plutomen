@@ -24,6 +24,12 @@ export const ALLOWED_TABLES = [
   "checks",
   "report_summary",
   "section_summary",
+  // Second round (db/migrations/011_measures_2.sql).
+  "lot_quantities",
+  "dated_items",
+  // Third round (db/migrations/012_measures_3.sql).
+  "observations",
+  "attachments",
 ] as const;
 
 /** Rows returned to the model and the caller, at most. */

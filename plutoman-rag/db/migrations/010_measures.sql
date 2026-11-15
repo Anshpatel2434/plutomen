@@ -61,6 +61,10 @@ CREATE POLICY inspection_amounts_tenant ON inspection_amounts
 GRANT SELECT, INSERT, UPDATE, DELETE ON inspection_amounts TO plutoman_app;
 
 -- --- checks: one row per checked item ----------------------------------------
+-- Migrations are replayed on every start; a later migration (011) adds columns
+-- to these views, and CREATE OR REPLACE cannot take columns away again.
+DROP VIEW IF EXISTS report_summary, section_summary, checks;
+
 CREATE OR REPLACE VIEW checks WITH (security_invoker = true) AS
 SELECT report_id, job_id, report_type, site, vendor, inspection_date,
        section, item, value, measurement, note, result, marked, page, position

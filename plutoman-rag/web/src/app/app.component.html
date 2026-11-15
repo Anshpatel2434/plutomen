@@ -35,12 +35,35 @@
           <div class="avatar">{{ m.role === 'user' ? 'You' : 'AI' }}</div>
           <div class="bubble">
             <div class="pending" *ngIf="m.pending"><span></span><span></span><span></span></div>
-            <p *ngIf="!m.pending" class="text">
+            <div class="stage" *ngIf="m.stage">{{ m.stage }}</div>
+            <p *ngIf="!m.pending" class="text" [class.draft]="m.draft">
               <ng-container *ngFor="let seg of answerSegments(m.content)">
                 <span *ngIf="!seg.cite">{{ seg.text }}</span>
                 <span *ngIf="seg.cite" class="cite">{{ seg.text }}</span>
               </ng-container>
             </p>
+            <div class="result" *ngFor="let t of m.tables">
+              <div class="result-head">
+                <span class="result-title">{{ t.title }}</span>
+                <span class="result-count">{{ t.rows.length }} {{ t.rows.length === 1 ? 'row' : 'rows' }}</span>
+              </div>
+              <div class="result-scroll">
+                <table>
+                  <thead>
+                    <tr><th *ngFor="let c of t.columns">{{ columnLabel(c) }}</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr *ngFor="let r of shownRows(t)">
+                      <td *ngFor="let c of t.columns" [class.num]="isNumber(r[c])">{{ r[c] ?? '' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <button class="result-more" *ngIf="hiddenRows(t)" (click)="showAll(t)">Show all {{ t.rows.length }} rows</button>
+            </div>
+            <div class="coverage" *ngIf="m.tables?.length && m.coverage && m.coverage.reportsInResult !== null">
+              Computed from the records: {{ m.coverage.reportsInResult }} of {{ m.coverage.reportsTotal }} reports appear in this result.
+            </div>
           </div>
         </div>
       </div>

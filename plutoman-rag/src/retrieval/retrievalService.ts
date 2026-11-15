@@ -21,7 +21,8 @@ import { rateLimit, recordUsage, getUsage, approxTokens } from "../rateLimit";
 import { enqueueIngest } from "../ingestion/queue";
 import { RetrievalFilters } from "./hybrid";
 import { retrieve } from "./retrieve";
-import { generateAnswer } from "./generate";
+import { generateAnswer, GenerationHooks } from "./generate";
+import { draftCleaner } from "./citations";
 import { condenseQuery } from "./condense";
 import { resolveEntities, resolveChatEntities } from "./entities";
 import {
@@ -395,9 +396,72 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
   }
-  const { conversationId: reqConversationId, message, topK, filters, generate } =
-    parsed.data;
-  const { tenantId, userId } = req.auth!; // trusted identity from the JWT
+  res.json(await chatTurn(req.auth!, parsed.data));
+}));
+
+/**
+ * POST /chat/stream — the same turn as POST /chat, sent as server-sent events
+ * so a client can show progress instead of waiting for the whole answer:
+ *
+ *   event: status  data: {"stage":"searching" | "writing" | "checking"}
+ *   event: delta   data: {"text":"..."}     pieces of the first draft
+ *   event: final   data: { ...the POST /chat response body... }
+ *   event: error   data: {"error":"internal_error"}
+ *
+ * The draft is checked against the records after it is written and may be
+ * corrected, so `final.answer` is the answer of record: a client replaces the
+ * streamed draft with it.
+ */
+router.post("/chat/stream", requireAuth, rateLimit, asyncRoute(async (req: Request, res: Response) => {
+  const parsed = ChatBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+    return;
+  }
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    // nginx (the web container, most reverse proxies): pass events through as they come.
+    "X-Accel-Buffering": "no",
+  });
+  const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  // A comment line every 15 s keeps idle proxies from closing the connection.
+  const beat = setInterval(() => res.write(": keep-alive\n\n"), 15000);
+  const cleaner = draftCleaner((text) => send("delta", { text }));
+  try {
+    const body = await chatTurn(req.auth!, parsed.data, {
+      onStage: (stage) => send("status", { stage }),
+      onDelta: cleaner.push,
+      onChecking: () => {
+        cleaner.end();
+        send("status", { stage: "checking" });
+      },
+    });
+    send("final", body);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[chat/stream] failed:", err instanceof Error ? err.message : String(err));
+    send("error", { error: "internal_error" });
+  } finally {
+    clearInterval(beat);
+    res.end();
+  }
+}));
+
+interface ChatHooks extends GenerationHooks {
+  onStage?: (stage: "searching" | "writing") => void;
+}
+
+/** One conversation turn: the work behind POST /chat and POST /chat/stream. */
+async function chatTurn(
+  auth: { tenantId: string; userId: string },
+  body: z.infer<typeof ChatBody>,
+  hooks: ChatHooks = {}
+): Promise<Record<string, unknown>> {
+  const { conversationId: reqConversationId, message, topK, filters, generate } = body;
+  const { tenantId, userId } = auth; // trusted identity from the JWT
+  hooks.onStage?.("searching");
 
   // 1) Resolve the conversation. Reuse the supplied id only if it exists for
   //    THIS tenant; otherwise start a fresh thread (never leak across tenants).
@@ -431,8 +495,7 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
       ]);
     });
     await recordUsage(tenantId, { searches: 1, genTokens: approxTokens(data.answer) });
-    res.json({ conversationId, ...dataBody(data) });
-    return;
+    return { conversationId, ...dataBody(data) };
   }
 
   // 3) History-aware rewrite -> standalone search query. Falls back to `message`
@@ -456,8 +519,9 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
   // 6) Grounded generation. The ORIGINAL user `message` is the question; history
   //    is passed only for conversational coherence (see generateAnswer's
   //    grounding invariant) — answers stay grounded in the retrieved context.
+  if (generate) hooks.onStage?.("writing");
   const generation = generate
-    ? await generateAnswer(message, hits, history, facts, computed ? { block: computedBlock(computed), tables: computed.tables } : null)
+    ? await generateAnswer(message, hits, history, facts, computed ? { block: computedBlock(computed), tables: computed.tables } : null, hooks)
     : { answer: null as string | null, citations: hits.map((h) => h.citation), verification: undefined };
 
   // 7) Persist both turns (user first, then assistant) so the next turn has
@@ -489,7 +553,7 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
     genTokens: approxTokens(generation.answer),
   });
 
-  res.json({
+  return {
     conversationId,
     answer: generation.answer,
     citations: generation.citations,
@@ -499,8 +563,8 @@ router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res
     aggregation: facts.map((f) => ({ heading: f.heading, counts: f.counts, listed: f.items.length })),
     verification: generation.verification,
     ...computedFields(computed),
-  });
-}));
+  };
+}
 
 /**
  * GET /usage — today's per-tenant usage counters (searches + approx genTokens),

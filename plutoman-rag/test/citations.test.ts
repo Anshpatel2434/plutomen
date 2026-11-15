@@ -111,3 +111,12 @@ test("Q23: '[S1: quoted text, S3]' keeps the quote and cites both sources", () =
   // An ordinary bracket that merely starts like a marker is left alone.
   assert.equal(renderCitations("Grade [S355: steel]", HITS).text, "Grade [S355: steel]");
 });
+
+test("draftCleaner removes source markers from a streamed draft, even when split across pieces", async () => {
+  const { draftCleaner } = await import("../src/retrieval/citations");
+  let out = "";
+  const c = draftCleaner((t) => (out += t));
+  for (const piece of ["Earthing is Not Ok [", "S1", "] and the gland plate is Ok [S12]", ". See [the note", "] too [S"]) c.push(piece);
+  c.end();
+  assert.equal(out, "Earthing is Not Ok and the gland plate is Ok. See [the note] too [S");
+});

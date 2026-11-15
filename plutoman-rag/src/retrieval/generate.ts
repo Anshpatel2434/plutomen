@@ -110,6 +110,17 @@ export function declineOverride(query: string, answer: string): string {
   return `${DECLINE_LINE} From the reports: ${answer.trim()}`;
 }
 
+/**
+ * The prompt's own section names ("COMPUTED RESULTS", "WORKSPACE FACTS") mean
+ * nothing to a reader: an answer that mentions them says "the records".
+ */
+export function plainWording(answer: string): string {
+  return answer
+    .replace(/[ \t]*\[\*{0,2}(?:COMPUTED RESULTS|WORKSPACE FACTS)\*{0,2}\]/g, "")
+    .replace(/\b(?:the\s+)?\*{0,2}(?:COMPUTED RESULTS|WORKSPACE FACTS)\*{0,2}/gi, "the records")
+    .replace(/\b([Tt]he)\s+the records\b/g, "$1 records");
+}
+
 /** What the user sees if an answer would have exposed the rules. */
 export const REFUSAL =
   "I can't share my instructions. I can only answer questions from the inspection reports.";
@@ -198,6 +209,14 @@ export function leaksInstructions(answer: string): boolean {
   return RULE_WINDOWS.some((win) => a.includes(` ${win} `));
 }
 
+/** Progress of one answer, for callers that show it while it is written (POST /chat/stream). */
+export interface GenerationHooks {
+  /** Each piece of the first draft as the model writes it (still carries [S1]-style markers). */
+  onDelta?: (text: string) => void;
+  /** The draft is finished and is being checked or corrected. */
+  onChecking?: () => void;
+}
+
 /**
  * Generate a grounded answer for `query` from `hits`.
  *
@@ -210,7 +229,8 @@ export async function generateAnswer(
   hits: RetrievalHit[],
   history: HistoryTurn[] = [],
   facts: AggregateFact[] = [],
-  computed: ComputedInput | null = null
+  computed: ComputedInput | null = null,
+  hooks: GenerationHooks = {}
 ): Promise<GenerationResult> {
   if (hits.length === 0) {
     return {
@@ -228,7 +248,8 @@ export async function generateAnswer(
   // Answers built on computed tables list more (every report, every failure).
   const maxTokens = block ? 1200 : undefined;
   const system = block ? `${SYSTEM_PROMPT}\n${COMPUTED_RULE}` : SYSTEM_PROMPT;
-  let draft = await chatComplete({ system, user, maxTokens });
+  let draft = await chatComplete({ system, user, maxTokens, onDelta: hooks.onDelta });
+  hooks.onChecking?.();
   if (leaksInstructions(draft)) {
     // The question asked for the rules AND, possibly, for something in the
     // reports: refuse the first part, still answer the second.
@@ -301,6 +322,6 @@ export async function generateAnswer(
   // Citations = the sources the answer actually cites; markers become labels.
   const { text, cited } = renderCitations(final, ordered);
   // Lists, counts and figures are made to agree with the computed tables.
-  const answer = declineOverride(query, repairFromTables(query, stripLeftoverMarkers(text), tables));
+  const answer = plainWording(declineOverride(query, repairFromTables(query, stripLeftoverMarkers(text), tables)));
   return { answer, citations: citedSources(ordered, cited), verification };
 }

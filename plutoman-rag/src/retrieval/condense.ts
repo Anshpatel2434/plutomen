@@ -15,7 +15,7 @@
  */
 import axios from "axios";
 import { config } from "../config";
-import { NUM_CTX } from "../llm";
+import { NUM_CTX, chatComplete } from "../llm";
 import { HistoryTurn } from "../conversation";
 
 interface OllamaGenerateResponse {
@@ -64,6 +64,10 @@ export async function condenseQuery(
   ].join("\n");
 
   try {
+    if (config.LLM_PROVIDER === "openai") {
+      const out = await chatComplete({ system: "You rewrite follow-up questions as standalone search queries.", user: prompt, maxTokens: 160 });
+      return out.length > 0 ? out : userMessage;
+    }
     const resp = await axios.post<OllamaGenerateResponse>(
       `${config.OLLAMA_URL}/api/generate`,
       {

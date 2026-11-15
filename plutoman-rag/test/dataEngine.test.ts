@@ -169,3 +169,10 @@ test("a result table is shown to the model row by row, with its size", () => {
   assert.match(text, /report_id: POID-4547081947 \| job_id: PH2026100008/);
   assert.match(renderTable({ ...TABLE, rows: [] }), /\(no rows\)/);
 });
+
+test("parsePlan: NOT_RECORDED names what the database does not hold", async () => {
+  const { parsePlan } = await import("../src/data/dataEngine");
+  assert.deepEqual(parsePlan("NOT_RECORDED: field complaints."), { route: "not_recorded", missing: "field complaints" });
+  assert.equal(parsePlan("LOOKUP").route, "lookup");
+  assert.equal(parsePlan("TITLE: t\n```sql\nSELECT 1\n```\nNOT_RECORDED: x y").route, "data");
+});

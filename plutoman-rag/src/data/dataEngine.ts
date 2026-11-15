@@ -24,6 +24,7 @@ import { withTenantRead } from "../db";
 import { getTenantDerived } from "../cache";
 import { Citation } from "../retrieval/citations";
 import { runSql, SqlError, SqlTable } from "./runSql";
+import { runReports } from "./reports";
 
 export interface HistoryTurn {
   role: "user" | "assistant";
@@ -153,24 +154,48 @@ STANDARD MEASURES (ready-made and already correct: use them instead of working a
 
 VIEW report_summary  (one row per report: anything counted, ranked or compared per report, vendor, site or type)
   every column of inspection_reports except the items_* tallies, plus
-  checks             integer  how many items were checked in the report
+  checks             integer  how many check rows the report has (photo / attachment rows are not checks)
   passed, failed, conditional   integer
-  pass_rate_percent  numeric  100 * passed / checks
+  no_verdict         integer  check rows that record a reading only, with no Ok / Not Ok / Pass / Fail
+  pass_rate_percent  numeric  100 * passed / (checks - no_verdict)
   marked_not_ok      integer  checks the inspector wrote 'Not Ok' against
+  po_number          text     the purchase order the lot was inspected against, e.g. '4500134567' (lots can share one)
+  po_date            date     the date of that purchase order
+  observations       integer  how many inspection observations the report lists
+  critical_observations, major_observations, minor_observations   integer  observations of each severity
+  worst_observation  text     'Critical' | 'Major' | 'Minor'; NULL when the report has no observation
+
+VIEW observations  (one row per inspection observation)
+  report_id, job_id, report_type, site, vendor, inspection_date, item, value, note, page
+  severity     text     'Critical' | 'Major' | 'Minor'
 
 VIEW section_summary  (one row per report and section)
   report_id, job_id, report_type, site, vendor, inspection_date, section,
-  checks, passed, failed, conditional, pass_rate_percent, marked_not_ok
+  checks, passed, failed, conditional, pass_rate_percent, marked_not_ok, no_verdict
 
-VIEW checks  (one row per checked item; the same columns as inspection_items without area)
+VIEW checks  (one row per check row; the same columns as inspection_items without area; photo / attachment rows left out)
   report_id, job_id, report_type, site, vendor, inspection_date, section, item, value, measurement, note, result, marked, page, position
+  result is NULL when the row records a reading only.
+
+VIEW lot_quantities  (one row per quantity of a lot, next to how that lot concluded: use it whenever quantities are
+                      added up, or filtered or split by outcome, vendor or report type)
+  report_id, job_id, report_type, site, vendor, inspection_date, item, value, page
+  amount       numeric  e.g. 5000
+  unit         text     lower case, singular: 'nos', 'drum', 'mtr'
+  test_results_result, clearance_result, declaration_result   'PASS' | 'FAIL' | 'CONDITIONAL'
+  test_results, technical_clearance, declaration   the conclusion as written
+  outcome_summary, outcome_conflict
+
+VIEW dated_items  (one row per recorded value that contains a date, e.g. 'PO No. 4500134567 dated 01-Jul-2026')
+  report_id, job_id, report_type, site, vendor, inspection_date, area, section, item, value, page
+  value_date   date     the date written in the value: order and compare with it
 
 TABLE inspection_amounts  (one row per quantity or reading, as a NUMBER that can be summed and compared)
   report_id, job_id, report_type, site, vendor, inspection_date, area, section, item, value, page, position
   amount       numeric  e.g. 5000
   unit         text     lower case, singular: 'nos', 'drum', 'mtr', 'mm', 'percent', ...`;
 
-function renderCatalog(cat: DataCatalog): string {
+export function renderCatalog(cat: DataCatalog): string {
   const lines = [
     `Reports: ${cat.reports}` + (cat.firstDate ? `, inspected ${cat.firstDate} to ${cat.lastDate}` : ""),
     `Vendors: ${cat.vendors.map((v) => `'${v.name}' (${v.reports})`).join(", ") || "none"}`,
@@ -202,10 +227,15 @@ export function planSystemPrompt(cat: DataCatalog, today: string): string {
     "",
     "DECIDE FIRST",
     "Reply with the single word LOOKUP only when the question:",
-    "- is about ONE report and asks for one or two values or notes recorded in it, or",
+    "- is about ONE report and asks for one or two values or notes recorded in it (a list of that report's checks,",
+    "  such as all that failed, all with a note, or everything wrong in a section, is NOT a lookup: write SQL), or",
     "- asks what a term means, or how a procedure / SOP / other document says to do something, or",
     "- asks how a report is laid out: which sections or parts it contains, in what order, what its contents page lists, or",
     "- is not about the inspection records at all.",
+    "Reply with one line `NOT_RECORDED: <what is missing>` when the question asks about something this database does",
+    "not hold at all: nothing in the columns, the quantities or the item lists below is that thing (for example prices,",
+    "complaints from the field, delivery dates or delays, certificates, how many units were sampled). Never answer",
+    "such a question with a different measure under the asked-for name, and never work one out from other dates.",
     "Every other question is answered with SQL: anything about several reports, a whole section, a vendor, a site or",
     "a person across reports; anything asking which, how many, list, all, any, compare, most, least, rate, share,",
     "summary or overview.",
@@ -223,12 +253,16 @@ export function planSystemPrompt(cat: DataCatalog, today: string): string {
     "   - \"marked Not Ok\", \"Not Ok\", \"not okay\": the word the inspector wrote. marked = 'Not Ok' (in checks), or marked_not_ok (in the summaries).",
     "   - \"failed\", \"rejected\": result = 'FAIL'.",
     "   - \"did not pass\", \"problems\", \"issues\", \"deviations\", \"below spec\", \"not clear\": result IN ('FAIL', 'CONDITIONAL').",
-    "   Count checks in the view checks (it leaves out items that were not checks).",
+    "   A question that names several of these together (\"Not Ok or awaiting retest\", \"not clean\") means result IN ('FAIL', 'CONDITIONAL').",
+    "   Report types word their results differently (one writes 'Not Ok', another 'Fail'): a question that spans",
+    "   report types, or asks how a named test came out, filters on result, never on marked.",
+    "   Count checks in the view checks (it leaves out photo rows and items that were not checks). A share \"of the",
+    "   checks\" is over all its rows: ROUND(100.0 * COUNT(*) FILTER (WHERE marked = 'Not Ok') / NULLIF(COUNT(*), 0), 1).",
     "5. Never JOIN. Every table and view already carries report_id, job_id, vendor, site, report_type and inspection_date;",
     "   to restrict one by another use report_id IN (SELECT report_id FROM ...). Tallies and rates come from report_summary or",
     "   section_summary. Over several reports, add the columns up: ROUND(100.0 * SUM(passed) / NULLIF(SUM(checks), 0), 1).",
     "6. Whenever the question is about a lot's outcome (cleared, rejected, dispatch, accepted, passed overall), select",
-    "   report_id, job_id, vendor, outcome_summary, outcome_conflict and items_failed. Never judge an outcome from one",
+    "   report_id, job_id, vendor, outcome_summary, outcome_conflict and failed FROM report_summary. Never judge an outcome from one",
     "   conclusion field alone: the three can disagree. Filter or count with the *_result columns, show outcome_summary.",
     "7. Give columns plain names with AS. ORDER BY what matters most. LIMIT lists to 50 rows.",
     "8. Everything recorded about a lot that is not a column of inspection_reports is a row of inspection_items:",
@@ -239,10 +273,36 @@ export function planSystemPrompt(cat: DataCatalog, today: string): string {
     "   a measured figure) is in value or note: filter it with value ILIKE '%...%'.",
     "10. Prefer selecting the matching rows to count(*) alone: you are told how many rows there are, and each row can be",
     "    cited. Use count or sum when grouping (per vendor, per report, per section) or when the rows would exceed 50.",
-    "11. Totals of quantities (how much, how many units, add up, in total): SUM(amount) FROM inspection_amounts, with",
-    "    GROUP BY unit, filtered by a word of the item name (item ILIKE '%offered%'). Never add up text values yourself.",
-    "    Always add a second query that lists each lot's own recorded value (the rows of inspection_items), so every",
-    "    lot's quantity is shown next to the total.",
+    "11. Quantities of lots (how much, how many units / metres / drums / pieces, add up, in total, share by quantity):",
+    "    SUM(amount) FROM lot_quantities, always with a filter on a word of the item name (item ILIKE '%offered%') and",
+    "    GROUP BY unit. Its outcome columns filter or split the quantity: lots that came out Not Ok are",
+    "    test_results_result = 'FAIL'; lots not cleared for dispatch are declaration_result = 'FAIL'; lots DECLARED",
+    "    REJECTED are declaration ILIKE '%reject%' (a lot held for re-inspection is not a rejected lot). A scorecard or",
+    "    summary of a vendor includes the SUM per unit as well as each lot. A question about HOW MANY UNITS is a",
+    "    SUM(amount), never a COUNT of reports. Never add up text values yourself. Always add a second query that lists",
+    "    each lot's own quantity (report_id, job_id, vendor, item, value, page FROM lot_quantities with the same filter).",
+    "    Readings of checks (mm, percent, ohm) are in inspection_amounts.",
+    "16. Purchase orders are po_number and po_date in report_summary: lots against the same PO are GROUP BY po_number,",
+    "    how many POs is COUNT(DISTINCT po_number), the oldest PO is ORDER BY po_date. To compare lots that share a PO,",
+    "    select all of them (WHERE po_number IN (SELECT po_number FROM report_summary WHERE vendor ILIKE '%acme%')).",
+    "    A lot is found by any other detail recorded in it (an engineer, a code) with",
+    "    report_id IN (SELECT report_id FROM inspection_items WHERE value ILIKE '%suresh%').",
+    "17. Oldest, newest, before, after, by any other date written in a value (a validity date): use dated_items and",
+    "    ORDER BY value_date. The inspection's own date is inspection_date.",
+    "20. Observations and their severity (Minor, Major, Critical) are the view observations, and per lot the columns",
+    "    critical_observations, major_observations, minor_observations, worst_observation of report_summary.",
+    "    \"Nothing above Minor\" is critical_observations = 0 AND major_observations = 0. A lot with a Critical",
+    "    observation that was still cleared is critical_observations > 0 AND declaration_result = 'PASS'.",
+    "21. \"Common to both / to all\" and \"in every lot\": GROUP BY item alone, HAVING COUNT(DISTINCT report_id) = the",
+    "    number of lots. \"Which tests did every lot get through\": GROUP BY item HAVING",
+    "    COUNT(*) FILTER (WHERE result IN ('FAIL', 'CONDITIONAL')) = 0. Never group by value, note or page there.",
+    "22. A question may assert something that is not so (\"since Acme failed the IR test\", \"all five lots were Not",
+    "    Ok\", \"as Acme has the most reports\"). Do not put the assertion in WHERE: select that test or measure for",
+    "    every vendor or lot of the kind, so the answer can confirm it or say who it really applies to.",
+    "19. Never guess keywords to decide what a note or value means (a note that \"points to a problem\", a \"serious\"",
+    "    remark): select every row that has a note (note <> '') with its text, and the answer will judge them.",
+    "18. A question that asks for a split or \"how many of each kind\" gets every kind: GROUP BY the column itself",
+    "    (the text as written and its *_result), never only the kind the question happens to name.",
     "12. \"How many of them / of each\" needs the whole as well as the part: select both (COUNT(*) AS reports and",
     "    COUNT(*) FILTER (WHERE ...) AS matching), so the answer can say \"2 of 5\".",
     "13. \"Shared by / under two different ...\": GROUP BY the shared value HAVING COUNT(DISTINCT the other column) > 1.",
@@ -269,12 +329,58 @@ export function planSystemPrompt(cat: DataCatalog, today: string): string {
     "Q: Total quantity Acme offered across its lots?",
     "TITLE: Total offered by Acme, per unit",
     "```sql",
-    "SELECT unit, SUM(amount) AS total, COUNT(DISTINCT report_id) AS reports FROM inspection_amounts WHERE vendor ILIKE '%acme%' AND item ILIKE '%offered%' GROUP BY unit ORDER BY unit",
+    "SELECT unit, SUM(amount) AS total, COUNT(DISTINCT report_id) AS lots FROM lot_quantities WHERE vendor ILIKE '%acme%' AND item ILIKE '%offered%' GROUP BY unit ORDER BY unit",
     "```",
     "TITLE: What each Acme lot offered",
     "```sql",
-    "SELECT report_id, job_id, vendor, item, value, page FROM inspection_items WHERE vendor ILIKE '%acme%' AND item ILIKE '%offered%' ORDER BY report_id",
+    "SELECT report_id, job_id, vendor, item, value, page FROM lot_quantities WHERE vendor ILIKE '%acme%' AND item ILIKE '%offered%' ORDER BY report_id",
     "```",
+    "Q: How many units are in the Acme lots that were declared rejected?",
+    "TITLE: Units offered in rejected Acme lots, per unit",
+    "```sql",
+    "SELECT unit, SUM(amount) AS total, COUNT(DISTINCT report_id) AS lots FROM lot_quantities WHERE vendor ILIKE '%acme%' AND item ILIKE '%offered%' AND declaration ILIKE '%reject%' GROUP BY unit ORDER BY unit",
+    "```",
+    "TITLE: The rejected Acme lots and what each offered",
+    "```sql",
+    "SELECT report_id, job_id, vendor, item, value, declaration, page FROM lot_quantities WHERE vendor ILIKE '%acme%' AND item ILIKE '%offered%' AND declaration ILIKE '%reject%' ORDER BY report_id",
+    "```",
+    "Q: Acme and Zenith were inspected against the same PO. Did the two lots conclude differently?",
+    "TITLE: Lots that share a purchase order with Acme, and how each concluded",
+    "```sql",
+    "SELECT po_number, po_date, report_id, job_id, vendor, outcome_summary, outcome_conflict, failed FROM report_summary WHERE po_number IN (SELECT po_number FROM report_summary WHERE vendor ILIKE '%acme%') ORDER BY po_number, vendor",
+    "```",
+    "Q: Which lots have nothing worse than a Minor observation?",
+    "TITLE: Lots by their observations, with the worst severity",
+    "```sql",
+    "SELECT report_id, job_id, vendor, observations, minor_observations, major_observations, critical_observations, worst_observation, COUNT(*) OVER () AS lots_considered FROM report_summary ORDER BY critical_observations, major_observations, report_id",
+    "```",
+    "Q: Zenith failed the HV test. What value was recorded?",
+    "TITLE: HV test in every lot, with the result",
+    "```sql",
+    "SELECT report_id, job_id, vendor, item, value, measurement, note, result, page FROM checks WHERE item ILIKE '%HV%' ORDER BY vendor, report_id",
+    "```",
+    "Q: What share of the quantity offered came from Acme?",
+    "TITLE: Quantity offered, Acme against all vendors",
+    "```sql",
+    "SELECT unit, SUM(amount) AS total_all_vendors, SUM(amount) FILTER (WHERE vendor ILIKE '%acme%') AS total_acme, ROUND(100.0 * SUM(amount) FILTER (WHERE vendor ILIKE '%acme%') / NULLIF(SUM(amount), 0), 1) AS acme_share_percent FROM lot_quantities WHERE item ILIKE '%offered%' GROUP BY unit ORDER BY unit",
+    "```",
+    "Q: Which lot is against the oldest PO?",
+    "TITLE: Lots by PO date, oldest first",
+    "```sql",
+    "SELECT report_id, job_id, vendor, po_number, po_date FROM report_summary ORDER BY po_date, report_id",
+    "```",
+    "Q: In the Acme report, which checks are marked Ok but have a note?",
+    "TITLE: Checks marked Ok that carry a note, Acme report",
+    "```sql",
+    "SELECT report_id, job_id, vendor, section, item, value, note, result, page FROM checks WHERE vendor ILIKE '%acme%' AND marked = 'Ok' AND note <> '' ORDER BY position",
+    "```",
+    "Q: How was technical clearance given across the lots? Show the split.",
+    "TITLE: Technical clearance as written, with the number of lots",
+    "```sql",
+    "SELECT technical_clearance, clearance_result, COUNT(*) AS lots, STRING_AGG(job_id, ', ' ORDER BY job_id) AS jobs FROM report_summary GROUP BY technical_clearance, clearance_result ORDER BY lots DESC",
+    "```",
+    "Q: How many customer complaints were raised on Acme material?",
+    "NOT_RECORDED: customer complaints",
     "Q: For each report type, how many reports concluded with test results Ok?",
     "TITLE: Reports with test results Ok, per report type",
     "```sql",
@@ -293,7 +399,11 @@ export function planSystemPrompt(cat: DataCatalog, today: string): string {
   ].join("\n");
 }
 
-export type Plan = { route: "lookup" } | { route: "data"; queries: { title: string; sql: string }[] };
+export type Plan =
+  | { route: "lookup" }
+  | { route: "data"; queries: { title: string; sql: string }[] }
+  /** The question asks about something the database does not hold. */
+  | { route: "not_recorded"; missing: string };
 
 /** Read the model's reply: LOOKUP, or up to three titled ```sql blocks. */
 export function parsePlan(reply: string): Plan {
@@ -308,7 +418,9 @@ export function parsePlan(reply: string): Plan {
     const bare = /^\s*(?:TITLE:\s*([^\n]*)\n)?\s*((?:select|with)\b[\s\S]+)$/i.exec(reply);
     if (bare && !/\bLOOKUP\b/.test(reply)) queries.push({ title: (bare[1] ?? "").trim() || "Result 1", sql: bare[2].trim() });
   }
-  return queries.length > 0 ? { route: "data", queries: queries.slice(0, 3) } : { route: "lookup" };
+  if (queries.length > 0) return { route: "data", queries: queries.slice(0, 3) };
+  const missing = /^\s*NOT_RECORDED:\s*([^\n]{2,120})/im.exec(reply);
+  return missing ? { route: "not_recorded", missing: missing[1].trim().replace(/[.`*]+$/, "") } : { route: "lookup" };
 }
 
 // ---------------------------------------------------------------------------
@@ -590,7 +702,7 @@ export function rowsBehindCount(sql: string): string | null {
 
 /** Words that ask for something counted, ranked or compared. */
 const AGGREGATE_WORDS =
-  /\b(how many|how much|number of|count|total|sum|add up|average|mean|rate|percent|percentage|share|ratio|most|least|worst|best|highest|lowest|compare|comparison|versus|vs|across|each|every|all|any|which|list|overall|overview|summary|summari[sz]e|trend|rank|top)\b|%/i;
+  /\b(how many|how much|number of|count|total|sum|add up|average|mean|rate|percent|percentage|share|ratio|most|least|worst|best|highest|lowest|compare|comparison|versus|vs|across|each|every|all|any|which|list|overall|overview|summary|summari[sz]e|trend|rank|top|everything|anything|what all|open points?|issues|problems|wrong|pending|outstanding|chase|follow[- ]?up)\b|%/i;
 
 /** A question about how a lot came out: cleared, rejected, free to dispatch. */
 const OUTCOME_WORDS =
@@ -611,6 +723,12 @@ async function outcomeOf(tenantId: string, jobId: string): Promise<DataTable | n
   } catch {
     return null;
   }
+}
+
+/** What the engine decided and ran, in the API log (grep "[data]"). */
+function trace(line: string): void {
+  // eslint-disable-next-line no-console
+  console.log(`[data] ${line}`);
 }
 
 /** A question about one named report that asks for nothing counted or compared: search answers it. */
@@ -656,6 +774,19 @@ export async function computeTables(
     return outcome ? { ...none, tables: [outcome] } : none;
   }
 
+  // Ready-made reports (reports.ts), OFF unless DATA_REPORTS=true: the model
+  // picks a fixed report instead of writing the query. Measured 2026-11-12 on
+  // Ministral 3 14B it did not beat the model-written query, so it is not the
+  // default. A question about one named lot always gets the written query.
+  if (config.DATA_REPORTS && jobIds.length !== 1) {
+    try {
+      const ready = await runReports(tenantId, question, catalog, renderCatalog(catalog), history, jobIds);
+      if (ready) return { tables: ready, notes, reportsTotal: catalog.reports, catalog };
+    } catch (err) {
+      trace(`reports failed (${err instanceof Error ? err.message.slice(0, 160) : "error"}); writing a query instead`);
+    }
+  }
+
   const system = planSystemPrompt(catalog, new Date().toISOString().slice(0, 10));
   const ask = [
     ...historyBlock(history),
@@ -665,7 +796,17 @@ export async function computeTables(
     `QUESTION: ${question}`,
   ].join("\n");
   const plan = parsePlan(await chatComplete({ system, user: ask, maxTokens: DATA_MAX_TOKENS, numCtx: 8192, model: model() }));
+  trace(`plan ${plan.route} for: ${question.slice(0, 120).replace(/\s+/g, " ")}`);
   if (plan.route === "lookup") return none;
+  if (plan.route === "not_recorded") {
+    return {
+      ...none,
+      notes: [
+        ...notes,
+        `The inspection records hold nothing about ${plan.missing}. Unless a SOURCE states it, say that the reports do not record ${plan.missing}, and do not give another figure in its place.`,
+      ],
+    };
+  }
 
   // Run each query; a refused or failing one gets ONE correction with the reason.
   const tables: DataTable[] = [];
@@ -676,6 +817,7 @@ export async function computeTables(
       try {
         table = await runSql(tenantId, sql);
       } catch (err) {
+        trace(`query failed (${err instanceof Error ? err.message.slice(0, 160) : "error"}): ${sql.replace(/\s+/g, " ").slice(0, 300)}`);
         if (!(err instanceof SqlError) || attempt === 1) break;
         const fixed = parsePlan(
           await chatComplete({
@@ -718,7 +860,10 @@ export async function computeTables(
         }
       }
     }
-    if (table) tables.push({ title: q.title, sql, ...table });
+    if (table) {
+      trace(`${table.rows.length} rows: ${sql.replace(/\s+/g, " ").slice(0, 300)}`);
+      tables.push({ title: q.title, sql, ...table });
+    }
     // A bare count: fetch the records it counted, so the answer lists exactly those.
     const behind = table && !foundNothing(table) && plan.queries.length === 1 ? rowsBehindCount(sql) : null;
     if (behind) {
@@ -735,6 +880,17 @@ export async function computeTables(
   // Nothing ran, or nothing was found at all: let search try. "None" from a
   // query is not trusted on its own (it may be a lookup after all, be about an
   // uploaded document, or the filter may simply not match the data).
-  if (tables.length === 0 || tables.every((t) => foundNothing(t))) return none;
+  if (tables.length === 0) return none;
+  if (tables.every((t) => foundNothing(t))) {
+    // The queries ran and matched nothing, twice. Search still answers, but is
+    // told so: for "how many / are there any" the honest answer may be none.
+    return {
+      ...none,
+      notes: [
+        ...notes,
+        `A database search for "${tables[0].title}" matched nothing. That can mean there is none, or that the search missed how it is written. Go by the SOURCES: answer from what they show, and say there is none only if they show none either.`,
+      ],
+    };
+  }
   return { tables, notes, reportsTotal: catalog.reports, catalog };
 }

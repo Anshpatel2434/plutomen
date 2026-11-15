@@ -232,6 +232,10 @@ export function matchChatEntities(
 ): EntityMatch {
   const own = matchEntities(message, catalog);
   if (CONTRASTIVE.test(message) || rewritten === message) return own;
+  // A report the user names in this very message is the one meant ("and the
+  // same test on PH2026100011?"): the earlier turn's report, which the rewrite
+  // may still carry, must not be searched alongside it.
+  if (own.jobIds.length > 0 || own.poids.length > 0) return own;
   const fromRewrite = matchEntities(rewritten, catalog);
   const union = (a: string[], b: string[]) => [...new Set([...a, ...b])];
   return {

@@ -80,3 +80,11 @@ test("leak guard: normal answers and refusals are not flagged", () => {
     false
   );
 });
+
+test("plainWording: the prompt's section names do not reach the reader", async () => {
+  const { plainWording } = await import("../src/retrieval/generate");
+  assert.equal(
+    plainWording("Counts as recorded in the **COMPUTED RESULTS**: 3. Per WORKSPACE FACTS there are 11 reports."),
+    "Counts as recorded in the records: 3. Per the records there are 11 reports."
+  );
+});

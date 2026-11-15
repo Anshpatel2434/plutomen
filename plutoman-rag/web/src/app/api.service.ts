@@ -45,6 +45,21 @@ export interface ChatResponse {
   citations: { sopId: string; sectionPath: string | null; poid?: string | null; page?: string | null }[];
   results: RetrievalHit[];
   rewrittenQuery?: string;
+  /** Tables the database computed for the question (counts, lists, comparisons). */
+  tables?: ResultTable[];
+  coverage?: { reportsTotal: number; reportsInResult: number | null };
+}
+
+export interface ResultTable {
+  title: string;
+  columns: string[];
+  rows: Record<string, string | number | null>[];
+}
+
+/** Progress of a streamed answer (POST /chat/stream). */
+export interface ChatStreamHandlers {
+  onStage?: (stage: 'searching' | 'writing' | 'checking') => void;
+  onDelta?: (text: string) => void;
 }
 
 export interface Usage {
@@ -117,6 +132,60 @@ export class ApiService {
         headers: { Authorization: `Bearer ${token}` },
       })
     );
+  }
+
+  /**
+   * Same turn as chat(), read as server-sent events: stages and the draft
+   * arrive while the answer is written; the returned response is the checked
+   * answer and replaces the draft.
+   */
+  async chatStream(
+    token: string,
+    body: { conversationId?: string | null; message: string; filters?: SearchFilters; topK?: number; generate?: boolean },
+    handlers: ChatStreamHandlers
+  ): Promise<ChatResponse> {
+    const payload: Record<string, unknown> = {
+      message: body.message,
+      filters: body.filters,
+      topK: body.topK,
+      generate: body.generate,
+    };
+    if (body.conversationId) payload['conversationId'] = body.conversationId;
+    const res = await fetch(`${API_BASE}/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok || !res.body) throw { status: res.status };
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let final: ChatResponse | null = null;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let end: number;
+      // Events are separated by a blank line.
+      while ((end = buffer.indexOf('\n\n')) >= 0) {
+        const block = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        let event = 'message';
+        let data = '';
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim();
+          else if (line.startsWith('data:')) data += line.slice(5).trim();
+        }
+        if (!data) continue;
+        const parsed = JSON.parse(data);
+        if (event === 'status') handlers.onStage?.(parsed.stage);
+        else if (event === 'delta') handlers.onDelta?.(parsed.text);
+        else if (event === 'final') final = parsed as ChatResponse;
+        else if (event === 'error') throw { status: 500 };
+      }
+    }
+    if (!final) throw { status: 500 };
+    return final;
   }
 
   async usage(token: string): Promise<Usage> {

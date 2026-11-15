@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ApiService, RetrievalHit, SearchFilters, UploadItem, UploadLimits } from './api.service';
+import { ApiService, ResultTable, RetrievalHit, SearchFilters, UploadItem, UploadLimits } from './api.service';
 
 interface TenantOption {
   id: string;
@@ -14,7 +14,22 @@ interface ChatMessage {
   citations?: { sopId: string; sectionPath: string | null; poid?: string | null; page?: string | null }[];
   results?: RetrievalHit[];
   pending?: boolean;
+  /** What the assistant is doing while the answer is on its way. */
+  stage?: string;
+  /** True while `content` is the unchecked draft being written. */
+  draft?: boolean;
+  tables?: ResultTable[];
+  coverage?: { reportsTotal: number; reportsInResult: number | null };
 }
+
+const STAGE_LABEL: Record<string, string> = {
+  searching: 'Searching the reports',
+  writing: 'Writing the answer',
+  checking: 'Checking the answer against the records',
+};
+
+/** Rows of a table shown before "Show all". */
+const TABLE_PREVIEW_ROWS = 8;
 
 @Component({
   selector: 'app-root',
@@ -182,14 +197,29 @@ export class AppComponent implements OnInit {
     this.input = '';
     this.sending = true;
     try {
-      const res = await this.api.chat(this.token, {
-        conversationId: this.conversationId,
-        message: text,
-        filters: this.cleanFilters(),
-        generate: this.generate,
-      });
+      const res = await this.api.chatStream(
+        this.token,
+        {
+          conversationId: this.conversationId,
+          message: text,
+          filters: this.cleanFilters(),
+          generate: this.generate,
+        },
+        {
+          onStage: (stage) => (placeholder.stage = STAGE_LABEL[stage] ?? ''),
+          onDelta: (piece) => {
+            placeholder.pending = false;
+            placeholder.draft = true;
+            placeholder.content += piece;
+          },
+        }
+      );
       this.conversationId = res.conversationId;
       placeholder.pending = false;
+      placeholder.draft = false;
+      placeholder.stage = '';
+      placeholder.tables = (res.tables ?? []).filter((t) => t.rows.length > 0);
+      placeholder.coverage = res.coverage;
       placeholder.content =
         res.answer ??
         (res.results.length
@@ -223,6 +253,34 @@ export class AppComponent implements OnInit {
     }
   }
 
+  // --- computed tables -----------------------------------------------------------
+
+  /** Tables the user opened in full. */
+  private expanded = new Set<ResultTable>();
+
+  /** "pass_rate_percent" -> "Pass rate percent". */
+  columnLabel(c: string): string {
+    const s = c.replace(/_/g, ' ');
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  shownRows(t: ResultTable): ResultTable['rows'] {
+    return this.expanded.has(t) ? t.rows : t.rows.slice(0, TABLE_PREVIEW_ROWS);
+  }
+
+  hiddenRows(t: ResultTable): number {
+    return this.expanded.has(t) ? 0 : Math.max(0, t.rows.length - TABLE_PREVIEW_ROWS);
+  }
+
+  showAll(t: ResultTable): void {
+    this.expanded.add(t);
+  }
+
+  isNumber(v: unknown): boolean {
+    // Counts arrive from the database as digit strings.
+    return typeof v === 'number' || (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v));
+  }
+
   verdictClass(v: string | null): string {
     if (!v) return 'neutral';
     // CONDITIONAL ("retest pending", "subject to rectification") is neither a
@@ -232,7 +290,9 @@ export class AppComponent implements OnInit {
   }
 
   /** Turn [sopId | section] citations in the answer text into styled badges. */
-  answerSegments(text: string): { text: string; cite: boolean }[] {
+  answerSegments(raw: string): { text: string; cite: boolean }[] {
+    // The model marks emphasis with ** (Markdown); the page shows plain text.
+    const text = raw.replace(/\*\*/g, '');
     const parts: { text: string; cite: boolean }[] = [];
     const re = /\[[^\]]+\]/g;
     let last = 0;

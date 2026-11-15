@@ -229,3 +229,35 @@ export function stripLeftoverMarkers(text: string): string {
     .replace(/[ \t]{2,}/g, " ")
     .trim();
 }
+
+/**
+ * Removes the model's source markers ([S3]) from a draft as it streams. A
+ * marker can arrive split across pieces, so text from an unclosed "[" is held
+ * back until it closes (or turns out not to be a marker).
+ */
+export function draftCleaner(emit: (text: string) => void): { push: (piece: string) => void; end: () => void } {
+  let held = "";
+  const flush = (all: boolean) => {
+    let out = held;
+    held = "";
+    const open = out.lastIndexOf("[");
+    if (!all && open >= 0 && out.indexOf("]", open) < 0 && out.length - open < 12) {
+      held = out.slice(open);
+      out = out.slice(0, open);
+    }
+    // The space before a marker goes with it, so it waits for what follows.
+    if (!all && out.endsWith(" ")) {
+      held = " " + held;
+      out = out.slice(0, -1);
+    }
+    out = out.replace(/ ?\[S\d+\]/g, "");
+    if (out) emit(out);
+  };
+  return {
+    push: (piece) => {
+      held += piece;
+      flush(false);
+    },
+    end: () => flush(true),
+  };
+}
