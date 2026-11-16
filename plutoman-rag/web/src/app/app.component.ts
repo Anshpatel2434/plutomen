@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ApiService, RetrievalHit, SearchFilters } from './api.service';
+import { ApiService, ResultTable, RetrievalHit, SearchFilters, UploadItem, UploadLimits } from './api.service';
 
 interface TenantOption {
   id: string;
@@ -11,10 +11,25 @@ interface TenantOption {
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
-  citations?: { sopId: string; sectionPath: string | null }[];
+  citations?: { sopId: string; sectionPath: string | null; poid?: string | null; page?: string | null }[];
   results?: RetrievalHit[];
   pending?: boolean;
+  /** What the assistant is doing while the answer is on its way. */
+  stage?: string;
+  /** True while `content` is the unchecked draft being written. */
+  draft?: boolean;
+  tables?: ResultTable[];
+  coverage?: { reportsTotal: number; reportsInResult: number | null };
 }
+
+const STAGE_LABEL: Record<string, string> = {
+  searching: 'Searching the reports',
+  writing: 'Writing the answer',
+  checking: 'Checking the answer against the records',
+};
+
+/** Rows of a table shown before "Show all". */
+const TABLE_PREVIEW_ROWS = 8;
 
 @Component({
   selector: 'app-root',
@@ -44,6 +59,16 @@ export class AppComponent implements OnInit {
   error: string | null = null;
   searchesToday = 0;
 
+  // --- your documents (uploads) ---
+  uploads: UploadItem[] = [];
+  uploadLimits: UploadLimits | null = null;
+  uploadErrors: string[] = [];
+  uploading = 0;
+  dragOver = false;
+  /** Upload awaiting the inline "Remove / Keep" choice (no browser dialogs). */
+  confirmRemoveId: string | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(private api: ApiService) {}
 
   async ngOnInit(): Promise<void> {
@@ -56,7 +81,7 @@ export class AppComponent implements OnInit {
     try {
       this.token = await this.api.devToken(this.tenantId);
       this.tokenReady = true;
-      await this.refreshUsage();
+      await Promise.all([this.refreshUsage(), this.refreshUploads()]);
     } catch {
       this.error =
         'Could not reach the API / mint a dev token. Is the backend running with DEV_MODE=true on :3000?';
@@ -68,6 +93,75 @@ export class AppComponent implements OnInit {
     this.conversationId = null;
     this.messages = [];
     await this.refreshToken();
+  }
+
+  // --- your documents ----------------------------------------------------------
+
+  /** Reload the upload list; keep polling while anything is still indexing. */
+  async refreshUploads(): Promise<void> {
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    this.pollTimer = null;
+    try {
+      const res = await this.api.listUploads(this.token);
+      this.uploads = res.uploads;
+      this.uploadLimits = res.limits;
+    } catch {
+      return; // non-fatal: the chat still works without the list
+    }
+    if (this.uploads.some((u) => u.status === 'queued' || u.status === 'processing')) {
+      this.pollTimer = setTimeout(() => this.refreshUploads(), 2000);
+    }
+  }
+
+  get acceptList(): string {
+    return (this.uploadLimits?.extensions ?? ['.pdf', '.xlsx', '.csv', '.txt', '.md']).join(',');
+  }
+
+  onFilesPicked(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (input.files) void this.uploadFiles(Array.from(input.files));
+    input.value = ''; // allow re-picking the same file
+  }
+
+  onDrop(event: DragEvent): void {
+    event.preventDefault();
+    this.dragOver = false;
+    if (event.dataTransfer?.files) void this.uploadFiles(Array.from(event.dataTransfer.files));
+  }
+
+  async uploadFiles(files: File[]): Promise<void> {
+    if (!this.tokenReady || files.length === 0) return;
+    this.uploadErrors = [];
+    const maxBytes = (this.uploadLimits?.maxMb ?? 15) * 1024 * 1024;
+    for (const file of files) {
+      if (file.size > maxBytes) {
+        this.uploadErrors.push(`${file.name}: larger than ${this.uploadLimits?.maxMb ?? 15} MB`);
+        continue;
+      }
+      this.uploading++;
+      try {
+        await this.api.uploadFile(this.token, file);
+      } catch (e: any) {
+        this.uploadErrors.push(`${file.name}: ${e?.error?.error ?? 'upload failed'}`);
+      } finally {
+        this.uploading--;
+      }
+    }
+    await this.refreshUploads();
+  }
+
+  async removeUpload(u: UploadItem): Promise<void> {
+    this.confirmRemoveId = null;
+    try {
+      await this.api.deleteUpload(this.token, u.id);
+    } catch {
+      this.uploadErrors = [`${u.filename}: could not be removed`];
+    }
+    await this.refreshUploads();
+  }
+
+  formatSize(bytes: number): string {
+    return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
   }
 
   newConversation(): void {
@@ -103,14 +197,29 @@ export class AppComponent implements OnInit {
     this.input = '';
     this.sending = true;
     try {
-      const res = await this.api.chat(this.token, {
-        conversationId: this.conversationId,
-        message: text,
-        filters: this.cleanFilters(),
-        generate: this.generate,
-      });
+      const res = await this.api.chatStream(
+        this.token,
+        {
+          conversationId: this.conversationId,
+          message: text,
+          filters: this.cleanFilters(),
+          generate: this.generate,
+        },
+        {
+          onStage: (stage) => (placeholder.stage = STAGE_LABEL[stage] ?? ''),
+          onDelta: (piece) => {
+            placeholder.pending = false;
+            placeholder.draft = true;
+            placeholder.content += piece;
+          },
+        }
+      );
       this.conversationId = res.conversationId;
       placeholder.pending = false;
+      placeholder.draft = false;
+      placeholder.stage = '';
+      placeholder.tables = (res.tables ?? []).filter((t) => t.rows.length > 0);
+      placeholder.coverage = res.coverage;
       placeholder.content =
         res.answer ??
         (res.results.length
@@ -144,13 +253,46 @@ export class AppComponent implements OnInit {
     }
   }
 
+  // --- computed tables -----------------------------------------------------------
+
+  /** Tables the user opened in full. */
+  private expanded = new Set<ResultTable>();
+
+  /** "pass_rate_percent" -> "Pass rate percent". */
+  columnLabel(c: string): string {
+    const s = c.replace(/_/g, ' ');
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  shownRows(t: ResultTable): ResultTable['rows'] {
+    return this.expanded.has(t) ? t.rows : t.rows.slice(0, TABLE_PREVIEW_ROWS);
+  }
+
+  hiddenRows(t: ResultTable): number {
+    return this.expanded.has(t) ? 0 : Math.max(0, t.rows.length - TABLE_PREVIEW_ROWS);
+  }
+
+  showAll(t: ResultTable): void {
+    this.expanded.add(t);
+  }
+
+  isNumber(v: unknown): boolean {
+    // Counts arrive from the database as digit strings.
+    return typeof v === 'number' || (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v));
+  }
+
   verdictClass(v: string | null): string {
     if (!v) return 'neutral';
+    // CONDITIONAL ("retest pending", "subject to rectification") is neither a
+    // pass nor a fail — don't colour it as a pass.
+    if (v.toUpperCase() === 'CONDITIONAL') return 'neutral';
     return v.toUpperCase().includes('NOT') ? 'fail' : 'pass';
   }
 
   /** Turn [sopId | section] citations in the answer text into styled badges. */
-  answerSegments(text: string): { text: string; cite: boolean }[] {
+  answerSegments(raw: string): { text: string; cite: boolean }[] {
+    // The model marks emphasis with ** (Markdown); the page shows plain text.
+    const text = raw.replace(/\*\*/g, '');
     const parts: { text: string; cite: boolean }[] = [];
     const re = /\[[^\]]+\]/g;
     let last = 0;
@@ -162,6 +304,29 @@ export class AppComponent implements OnInit {
     }
     if (last < text.length) parts.push({ text: text.slice(last), cite: false });
     return parts;
+  }
+
+  /**
+   * A source in the golden set's citation form: "POID-4547081947.pdf p.6"
+   * (document + printed page). Falls back to the source id when the report
+   * was ingested without its PDF twin.
+   */
+  sourceRef(r: RetrievalHit): string {
+    if (!r.poid) return this.shortSop(r.sopId);
+    return r.page ? `${r.poid}.pdf p.${r.page}` : `${r.poid}.pdf`;
+  }
+
+  /** Whether the latest answer cites this source (a wrong-document citation is a fail). */
+  isCited(r: RetrievalHit): boolean {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i];
+      if (m.role === 'assistant' && m.results) {
+        return (m.citations ?? []).some(
+          (c) => c.poid === r.poid && c.page === r.page && c.sectionPath === r.sectionPath
+        );
+      }
+    }
+    return false;
   }
 
   shortSop(sop: string): string {

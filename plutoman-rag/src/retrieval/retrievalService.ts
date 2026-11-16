@@ -10,7 +10,7 @@
  * verified JWT (req.auth.tenantId), never from the request body — a client
  * cannot ingest into or search another tenant.
  */
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 import { requireAuth } from "../auth";
@@ -19,9 +19,23 @@ import { config } from "../config";
 import { buildSearchKey, cacheGetJSON, cacheSetJSON } from "../cache";
 import { rateLimit, recordUsage, getUsage, approxTokens } from "../rateLimit";
 import { enqueueIngest } from "../ingestion/queue";
-import { hybridSearch, rerank, RetrievalFilters } from "./hybrid";
-import { generateAnswer } from "./generate";
+import { RetrievalFilters } from "./hybrid";
+import { retrieve } from "./retrieve";
+import { generateAnswer, GenerationHooks } from "./generate";
+import { draftCleaner } from "./citations";
 import { condenseQuery } from "./condense";
+import { resolveEntities, resolveChatEntities } from "./entities";
+import {
+  answerWithData,
+  computeTables,
+  computedBlock,
+  hasComputed,
+  coverageOf,
+  displayRows,
+  Computed,
+  DataAnswer,
+  HistoryTurn as DataHistoryTurn,
+} from "../data/dataEngine";
 import {
   createConversation,
   conversationExists,
@@ -31,6 +45,92 @@ import {
 
 export const router = Router();
 
+/**
+ * Try the data engine (counts, lists, comparisons, overviews — src/data/). It
+ * answers only when the question needs the records computed; null sends the
+ * question to search as before. Never fatal: any failure here also falls back.
+ * Skipped when the caller set explicit filters, which only search applies.
+ */
+async function tryDataEngine(
+  tenantId: string,
+  question: string,
+  history: DataHistoryTurn[],
+  generate: boolean,
+  filters: unknown
+): Promise<DataAnswer | null> {
+  if (!config.DATA_ENGINE || config.DATA_MODE !== "answer" || !generate) return null;
+  if (filters && Object.values(filters as Record<string, unknown>).some((v) => v)) return null;
+  try {
+    return await answerWithData(tenantId, question, history);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[data] engine failed, falling back to search:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+/**
+ * "augment" mode: only compute the tables. The search path then answers from
+ * the tables AND the retrieved passages together. Same fallbacks as above.
+ */
+async function tryCompute(
+  tenantId: string,
+  question: string,
+  history: DataHistoryTurn[],
+  generate: boolean,
+  filters: unknown,
+  jobIds: string[] = []
+): Promise<Computed | null> {
+  if (!config.DATA_ENGINE || config.DATA_MODE !== "augment" || !generate) return null;
+  if (filters && Object.values(filters as Record<string, unknown>).some((v) => v)) return null;
+  try {
+    const c = await computeTables(tenantId, question, history, jobIds);
+    return hasComputed(c) ? c : null;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[data] compute failed, answering from search only:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+/** Extra response fields when computed tables were used alongside search. */
+function computedFields(c: Computed | null): Record<string, unknown> {
+  if (!c || c.tables.length === 0) return {};
+  return {
+    route: "data",
+    tables: c.tables.map((t) => ({ title: t.title, columns: t.columns, rows: displayRows(t), sql: t.sql })),
+    coverage: coverageOf(c.tables, c.reportsTotal),
+  };
+}
+
+/** Response fields of a data-engine answer (shared by /search and /chat). */
+function dataBody(d: DataAnswer): Record<string, unknown> {
+  return {
+    answer: d.answer,
+    citations: d.citations,
+    results: [],
+    route: "data",
+    // The computed result itself, for the UI to show as tables.
+    tables: d.tables.map((t) => ({ title: t.title, columns: t.columns, rows: displayRows(t), sql: t.sql })),
+    coverage: d.coverage,
+  };
+}
+
+/**
+ * Express 4 does not catch errors thrown from async handlers: a rejected
+ * promise (Ollama returning 500, a DB hiccup) became an unhandled rejection and
+ * Node killed the WHOLE API process — every tenant's requests failed until a
+ * restart. Forward async errors to Express's error middleware (server.ts) so a
+ * failing request fails alone.
+ */
+function asyncRoute(
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<void>
+): (req: Request, res: Response, next: NextFunction) => void {
+  return (req, res, next) => {
+    fn(req, res, next).catch(next);
+  };
+}
+
 // --- schemas ----------------------------------------------------------------
 
 const IngestBody = z.object({
@@ -39,6 +139,10 @@ const IngestBody = z.object({
   fileRef: z.string().min(1).optional(),
   // Inline the workbook as base64 when the adapter does not share a filesystem.
   xlsxBase64: z.string().min(1).optional(),
+  // Optional PDF twin of the same report (path or base64). Supplies POID,
+  // Job ID and printed pages for citations; rejected if it is a different report.
+  pdfRef: z.string().min(1).optional(),
+  pdfBase64: z.string().min(1).optional(),
 });
 
 const SearchBody = z.object({
@@ -123,13 +227,13 @@ router.post("/dev/token", (req: Request, res: Response) => {
   res.json({ token });
 });
 
-router.post("/ingest", requireAuth, rateLimit, async (req: Request, res: Response) => {
+router.post("/ingest", requireAuth, rateLimit, asyncRoute(async (req: Request, res: Response) => {
   const parsed = IngestBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
   }
-  const { mongoId, action, fileRef, xlsxBase64 } = parsed.data;
+  const { mongoId, action, fileRef, xlsxBase64, pdfRef, pdfBase64 } = parsed.data;
   const tenantId = req.auth!.tenantId; // from verified JWT
 
   if (action === "upsert" && !fileRef && !xlsxBase64) {
@@ -142,13 +246,15 @@ router.post("/ingest", requireAuth, rateLimit, async (req: Request, res: Respons
     mongoId,
     action,
     fileRef,
-    parsedPayload: xlsxBase64 ? { xlsxBase64 } : undefined,
+    pdfRef,
+    parsedPayload:
+      xlsxBase64 || pdfBase64 ? { xlsxBase64, pdfBase64 } : undefined,
   });
 
   res.status(202).json({ enqueued: true, jobId });
-});
+}));
 
-router.post("/search", requireAuth, rateLimit, async (req: Request, res: Response) => {
+router.post("/search", requireAuth, rateLimit, asyncRoute(async (req: Request, res: Response) => {
   const parsed = SearchBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
@@ -176,19 +282,46 @@ router.post("/search", requireAuth, rateLimit, async (req: Request, res: Respons
     }
   }
 
-  // 1) Hybrid retrieval (RLS-scoped to tenant inside hybridSearch).
-  const rawHits = await hybridSearch(tenantId, query, {
-    topN: topK ?? 10,
-    filters: filters as RetrievalFilters | undefined,
-  });
+  // 0b) Questions that need the records counted, listed, compared or
+  //     summarised are answered from the inspection tables (data engine).
+  const data = await tryDataEngine(tenantId, query, [], generate, filters);
+  if (data) {
+    const body = dataBody(data);
+    await withTenant(tenantId, async (client) => {
+      await client.query(`INSERT INTO audit (tenant_id, user_id, query, retrieved_ids) VALUES ($1, $2, $3, $4)`, [
+        tenantId,
+        userId,
+        query,
+        [],
+      ]);
+    });
+    if (cacheKey) await cacheSetJSON(cacheKey, body, config.CACHE_TTL_SECONDS);
+    await recordUsage(tenantId, { searches: 1, genTokens: approxTokens(data.answer) });
+    res.json(body);
+    return;
+  }
 
-  // 2) Reranking hook (identity no-op in Phase-1).
-  const hits = await rerank(query, rawHits);
+  // 1) Resolve reports named in the question (job / POID / vendor / report
+  //    type) into hard filters, then hybrid retrieval (RLS-scoped to tenant
+  //    inside hybridSearch). The resolution is deterministic for a given query
+  //    and catalog, and ingest invalidates both, so the cache key stays valid.
+  //    Questions asking for a list / count / comparison / the failures / the
+  //    lot's decision also get every matching item (eval change 4).
+  const resolved = await resolveEntities(tenantId, query);
+  // Search and the data engine's queries run side by side.
+  const [{ hits, facts }, computed] = await Promise.all([
+    retrieve(tenantId, query, {
+      topN: topK ?? 10,
+      filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
+    }),
+    tryCompute(tenantId, query, [], generate, filters, resolved.applied.jobIds ?? []),
+  ]);
 
-  // 3) Optional grounded generation.
+  // 3) Optional grounded generation (answers are checked against their
+  //    sources, eval change 9, and against the computed tables).
   const generation = generate
-    ? await generateAnswer(query, hits)
-    : { answer: null, citations: hits.map((h) => h.citation) };
+    ? await generateAnswer(query, hits, [], facts, computed ? { block: computedBlock(computed), tables: computed.tables } : null)
+    : { answer: null, citations: hits.map((h) => h.citation), verification: undefined };
 
   // 4) Audit the request (RLS-scoped write). This is a WRITE, so it MUST go to
   //    the PRIMARY via withTenant() — never the read-only replica path (see
@@ -211,6 +344,13 @@ router.post("/search", requireAuth, rateLimit, async (req: Request, res: Respons
     answer: generation.answer,
     citations: generation.citations,
     results: hits,
+    // Which reports the question was narrowed to (empty object = no narrowing).
+    appliedFilters: resolved.applied,
+    // Complete lists used for this question (eval change 4), and what the
+    // answer check found (eval change 9) — for transparency and testing.
+    aggregation: facts.map((f) => ({ heading: f.heading, counts: f.counts, listed: f.items.length })),
+    verification: generation.verification,
+    ...computedFields(computed),
   };
 
   // 5) Populate the cache on a miss. `cached: true` is added only when SERVING
@@ -228,7 +368,7 @@ router.post("/search", requireAuth, rateLimit, async (req: Request, res: Respons
   });
 
   res.json(responseBody);
-});
+}));
 
 /**
  * POST /chat — multi-turn conversational retrieval with memory.
@@ -250,15 +390,78 @@ router.post("/search", requireAuth, rateLimit, async (req: Request, res: Respons
  * nothing) is treated as "not found" and a fresh conversation is created — a
  * client can never attach to or read another tenant's conversation.
  */
-router.post("/chat", requireAuth, rateLimit, async (req: Request, res: Response) => {
+router.post("/chat", requireAuth, rateLimit, asyncRoute(async (req: Request, res: Response) => {
   const parsed = ChatBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
   }
-  const { conversationId: reqConversationId, message, topK, filters, generate } =
-    parsed.data;
-  const { tenantId, userId } = req.auth!; // trusted identity from the JWT
+  res.json(await chatTurn(req.auth!, parsed.data));
+}));
+
+/**
+ * POST /chat/stream — the same turn as POST /chat, sent as server-sent events
+ * so a client can show progress instead of waiting for the whole answer:
+ *
+ *   event: status  data: {"stage":"searching" | "writing" | "checking"}
+ *   event: delta   data: {"text":"..."}     pieces of the first draft
+ *   event: final   data: { ...the POST /chat response body... }
+ *   event: error   data: {"error":"internal_error"}
+ *
+ * The draft is checked against the records after it is written and may be
+ * corrected, so `final.answer` is the answer of record: a client replaces the
+ * streamed draft with it.
+ */
+router.post("/chat/stream", requireAuth, rateLimit, asyncRoute(async (req: Request, res: Response) => {
+  const parsed = ChatBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+    return;
+  }
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    // nginx (the web container, most reverse proxies): pass events through as they come.
+    "X-Accel-Buffering": "no",
+  });
+  const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  // A comment line every 15 s keeps idle proxies from closing the connection.
+  const beat = setInterval(() => res.write(": keep-alive\n\n"), 15000);
+  const cleaner = draftCleaner((text) => send("delta", { text }));
+  try {
+    const body = await chatTurn(req.auth!, parsed.data, {
+      onStage: (stage) => send("status", { stage }),
+      onDelta: cleaner.push,
+      onChecking: () => {
+        cleaner.end();
+        send("status", { stage: "checking" });
+      },
+    });
+    send("final", body);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[chat/stream] failed:", err instanceof Error ? err.message : String(err));
+    send("error", { error: "internal_error" });
+  } finally {
+    clearInterval(beat);
+    res.end();
+  }
+}));
+
+interface ChatHooks extends GenerationHooks {
+  onStage?: (stage: "searching" | "writing") => void;
+}
+
+/** One conversation turn: the work behind POST /chat and POST /chat/stream. */
+async function chatTurn(
+  auth: { tenantId: string; userId: string },
+  body: z.infer<typeof ChatBody>,
+  hooks: ChatHooks = {}
+): Promise<Record<string, unknown>> {
+  const { conversationId: reqConversationId, message, topK, filters, generate } = body;
+  const { tenantId, userId } = auth; // trusted identity from the JWT
+  hooks.onStage?.("searching");
 
   // 1) Resolve the conversation. Reuse the supplied id only if it exists for
   //    THIS tenant; otherwise start a fresh thread (never leak across tenants).
@@ -277,25 +480,49 @@ router.post("/chat", requireAuth, rateLimit, async (req: Request, res: Response)
     config.CHAT_HISTORY_TURNS
   );
 
+  // 2b) Questions that need the records counted, listed, compared or
+  //     summarised are answered from the inspection tables (data engine).
+  const data = await tryDataEngine(tenantId, message, history, generate, filters);
+  if (data) {
+    await appendMessage(tenantId, conversationId, "user", message);
+    await appendMessage(tenantId, conversationId, "assistant", data.answer, data.citations);
+    await withTenant(tenantId, async (client) => {
+      await client.query(`INSERT INTO audit (tenant_id, user_id, query, retrieved_ids) VALUES ($1, $2, $3, $4)`, [
+        tenantId,
+        userId,
+        message,
+        [],
+      ]);
+    });
+    await recordUsage(tenantId, { searches: 1, genTokens: approxTokens(data.answer) });
+    return { conversationId, ...dataBody(data) };
+  }
+
   // 3) History-aware rewrite -> standalone search query. Falls back to `message`
   //    on empty history or any Ollama error (never blocks the chat).
   const searchQuery = await condenseQuery(history, message);
 
-  // 4) Hybrid retrieval (RLS-scoped) on the rewritten query.
-  const rawHits = await hybridSearch(tenantId, searchQuery, {
-    topN: topK ?? 8,
-    filters: filters as RetrievalFilters | undefined,
-  });
-
-  // 5) Reranking hook (identity no-op in Phase-1).
-  const hits = await rerank(searchQuery, rawHits);
+  // 4) Resolve the report(s) the turn is about — from the user's own message,
+  //    plus the rewrite unless the message is contrastive ("the OTHER Finolex
+  //    job") — then hybrid retrieval (RLS-scoped) on the rewritten query.
+  const resolved = await resolveChatEntities(tenantId, message, searchQuery);
+  // A follow-up ("and for Polycab?") reaches the data engine with what it stands for.
+  const engineQuestion = searchQuery !== message ? `${message}\n(In full: ${searchQuery})` : message;
+  const [{ hits, facts }, computed] = await Promise.all([
+    retrieve(tenantId, searchQuery, {
+      topN: topK ?? 8,
+      filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
+    }),
+    tryCompute(tenantId, engineQuestion, history, generate, filters, resolved.applied.jobIds ?? []),
+  ]);
 
   // 6) Grounded generation. The ORIGINAL user `message` is the question; history
   //    is passed only for conversational coherence (see generateAnswer's
   //    grounding invariant) — answers stay grounded in the retrieved context.
+  if (generate) hooks.onStage?.("writing");
   const generation = generate
-    ? await generateAnswer(message, hits, history)
-    : { answer: null as string | null, citations: hits.map((h) => h.citation) };
+    ? await generateAnswer(message, hits, history, facts, computed ? { block: computedBlock(computed), tables: computed.tables } : null, hooks)
+    : { answer: null as string | null, citations: hits.map((h) => h.citation), verification: undefined };
 
   // 7) Persist both turns (user first, then assistant) so the next turn has
   //    context. Writes go to the primary via appendMessage -> withTenant.
@@ -326,21 +553,25 @@ router.post("/chat", requireAuth, rateLimit, async (req: Request, res: Response)
     genTokens: approxTokens(generation.answer),
   });
 
-  res.json({
+  return {
     conversationId,
     answer: generation.answer,
     citations: generation.citations,
     results: hits,
     rewrittenQuery: searchQuery,
-  });
-});
+    appliedFilters: resolved.applied,
+    aggregation: facts.map((f) => ({ heading: f.heading, counts: f.counts, listed: f.items.length })),
+    verification: generation.verification,
+    ...computedFields(computed),
+  };
+}
 
 /**
  * GET /usage — today's per-tenant usage counters (searches + approx genTokens),
  * scoped to the VERIFIED tenant from the JWT. Read-only; no rate limit needed.
  */
-router.get("/usage", requireAuth, async (req: Request, res: Response) => {
+router.get("/usage", requireAuth, asyncRoute(async (req: Request, res: Response) => {
   const { tenantId } = req.auth!;
   const usage = await getUsage(tenantId);
   res.json(usage);
-});
+}));

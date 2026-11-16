@@ -15,6 +15,7 @@
  */
 import axios from "axios";
 import { config } from "../config";
+import { NUM_CTX, chatComplete } from "../llm";
 import { HistoryTurn } from "../conversation";
 
 interface OllamaGenerateResponse {
@@ -50,6 +51,9 @@ export async function condenseQuery(
     "Given the conversation so far and a follow-up question, rewrite the",
     "follow-up into a STANDALONE search query that includes any entity/context",
     "it depends on. Output ONLY the rewritten query, with no preamble or quotes.",
+    "If the follow-up asks about \"the other\", \"another\" or \"a different\" one, the query must describe the one",
+    "NOT yet discussed: name what both share (vendor, report type) and say \"not <the Job ID already discussed>\";",
+    "do not repeat the details that identify the one already discussed.",
     "",
     "Conversation so far:",
     transcript,
@@ -60,12 +64,19 @@ export async function condenseQuery(
   ].join("\n");
 
   try {
+    if (config.LLM_PROVIDER === "openai") {
+      const out = await chatComplete({ system: "You rewrite follow-up questions as standalone search queries.", user: prompt, maxTokens: 160 });
+      return out.length > 0 ? out : userMessage;
+    }
     const resp = await axios.post<OllamaGenerateResponse>(
       `${config.OLLAMA_URL}/api/generate`,
       {
         model: config.GEN_MODEL,
         prompt,
         stream: false,
+        // The same context size as every other call: a different one makes
+        // Ollama reload the model (tens of seconds on every follow-up).
+        options: { temperature: 0, num_ctx: NUM_CTX, num_predict: 160 },
       }
     );
 

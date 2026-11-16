@@ -30,6 +30,77 @@ const ConfigSchema = z.object({
   // conversational coherence in generation. History is NEVER a source of facts.
   CHAT_HISTORY_TURNS: z.coerce.number().int().positive().default(6),
 
+  // --- Free-form documents (PDF / TXT / CSV / MD uploads) -----------------
+  // Size and overlap of the passages a free-form document is cut into.
+  PROSE_CHUNK_CHARS: z.coerce.number().int().positive().default(1200),
+  PROSE_CHUNK_OVERLAP: z.coerce.number().int().nonnegative().default(180),
+
+  // --- Document uploads (web UI) -------------------------------------------
+  UPLOAD_MAX_MB: z.coerce.number().positive().default(15),
+  UPLOAD_MAX_FILES: z.coerce.number().int().positive().default(50),
+  // Access codes for a hosted demo, "tenant=code;tenant2=code2". Empty = the
+  // /demo/login route is disabled. Codes are secrets: never commit them.
+  DEMO_ACCESS_CODES: z.string().default(""),
+
+  // --- Data engine (counts, lists, comparisons, overviews) ---------------
+  // Questions that need every matching record are answered by a database
+  // query the model writes over the inspection tables (src/data/). "false"
+  // sends every question to search, as before.
+  DATA_ENGINE: z
+    .enum(["true", "false", "1", "0"])
+    .default("true")
+    .transform((v) => v === "true" || v === "1"),
+  // "answer": the engine words its own answer from the result tables.
+  // "augment": the tables are handed to the search path's answer step, next
+  // to the retrieved passages, so one answer can use both.
+  DATA_MODE: z.enum(["answer", "augment"]).default("answer"),
+  // Ready-made reports (src/data/reports.ts): the model first picks one of a
+  // fixed set of reports for the question; the model-written query is the
+  // fallback when none fits. "false" = always the model-written query.
+  // OFF by default: measured 2026-11-12 on Ministral 3 14B it did not beat the
+  // model-written query on unseen questions (sealed B 93 vs 97, D 47 vs 48).
+  DATA_REPORTS: z
+    .enum(["true", "false", "1", "0"])
+    .default("false")
+    .transform((v) => v === "true" || v === "1"),
+  // Model that writes the query and words the result. Empty = GEN_MODEL.
+  DATA_MODEL: z.string().default(""),
+
+  // --- Model server ---------------------------------------------------------
+  // "ollama": Ollama at OLLAMA_URL (default). "openai": any server that speaks
+  // the OpenAI chat-completions API at LLM_BASE_URL, e.g. vLLM
+  // (http://host:8000/v1). GEN_MODEL is then the model name that server uses.
+  // Embeddings stay on Ollama in both cases.
+  LLM_PROVIDER: z.enum(["ollama", "openai"]).default("ollama"),
+  LLM_BASE_URL: z.string().url().optional(),
+  LLM_API_KEY: z.string().optional(),
+  // A reasoning model behind LLM_BASE_URL (Mistral's Magistral): "true" sends
+  // Mistral's thinking template in front of every system prompt, so the model
+  // works the question through before it answers. The thinking is not shown.
+  LLM_REASONING: z
+    .enum(["true", "false", "1", "0"])
+    .default("false")
+    .transform((v) => v === "true" || v === "1"),
+  // Tokens allowed for that thinking, on top of each call's own answer budget.
+  LLM_REASONING_TOKENS: z.coerce.number().int().min(0).default(4000),
+  // Sampling for the "openai" provider. 0 = repeatable. Reasoning models are
+  // usually run warmer (Mistral recommends 0.7 with top_p 0.95 for Magistral).
+  LLM_TEMPERATURE: z.coerce.number().min(0).max(2).default(0),
+  LLM_TOP_P: z.coerce.number().gt(0).max(1).default(1),
+
+  // --- Keyword ranker (eval change 8) ------------------------------------
+  // Share (0..1) of a question's rarity-weighted (IDF) words a chunk must
+  // contain to count as a keyword match. See src/retrieval/keywords.ts.
+  KW_MIN_MATCH_SHARE: z.coerce.number().min(0).max(1).default(0.4),
+
+  // --- Answer check (eval change 9) ----------------------------------------
+  // Check each generated answer against its sources and retry once with the
+  // problems found (see src/retrieval/verify.ts). "false" turns it off.
+  VERIFY_ANSWERS: z
+    .enum(["true", "false", "1", "0"])
+    .default("true")
+    .transform((v) => v === "true" || v === "1"),
+
   // --- Phase-3: JWT hardening ---------------------------------------------
   // Optional issuer/audience validation. When set, jwt.verify enforces the
   // `iss` / `aud` claims; when unset, the check is skipped (HS256 default).

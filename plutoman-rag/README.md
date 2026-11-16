@@ -76,6 +76,48 @@ curl -s http://localhost:3000/search \
 
 `/healthz` is public; `/ingest` and `/search` require the bearer token.
 
+## Run everything in Docker (testers)
+
+No Node.js needed — only Docker. Everything below runs from `plutoman-rag/`.
+
+```bash
+# First run: build the images, start the stack, pull the models and index the
+# 11 demo reports (the model download is ~4.7 GB, once).
+docker compose --profile app --profile demo up -d --build
+
+# Watch the demo indexing finish (`[ingest:demo] done.`), then open the UI:
+docker compose logs -f ingest-demo
+#   UI   http://localhost:8080   (calls the API through /api)
+#   API  http://localhost:3000   (same API, direct)
+```
+
+Later runs only need `docker compose --profile app up -d`. To re-index the demo
+reports, `docker compose --profile demo run --rm ingest-demo`.
+
+| Service | Image | Role |
+|---|---|---|
+| `api` | `plutoman-rag:local` | REST API (`/search`, `/chat`, `/ingest`, …), host port `API_HOST_PORT` (3000) |
+| `worker` | `plutoman-rag:local` | ingest queue worker |
+| `web` | `plutoman-web:local` | demo UI on nginx, host port `WEB_HOST_PORT` (8080); proxies `/api` to `api` |
+| `migrate` | `plutoman-rag:local` | one-shot: schema, roles, RLS (re-runs safely on every `up`) |
+| `ollama-pull` | `ollama/ollama` | one-shot: pulls `nomic-embed-text` and `GEN_MODEL` |
+| `ingest-demo` | `plutoman-rag:local` | one-shot, profile `demo`: indexes `../demo_data` |
+
+Notes:
+
+- Plain `docker compose up -d` (no profile) still starts only the
+  infrastructure, for the `npm` workflow above.
+- **Port clash?** Every host port is configurable: `POSTGRES_HOST_PORT`,
+  `PGBOUNCER_HOST_PORT`, `REDIS_HOST_PORT`, `OLLAMA_HOST_PORT`, `API_HOST_PORT`,
+  `WEB_HOST_PORT`, e.g. `POSTGRES_HOST_PORT=5546 docker compose --profile app up -d`.
+- **NVIDIA GPU** for Ollama:
+  `docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile app up -d`.
+  On CPU only, generated answers can take minutes each.
+- This is a **test stack**: `DEV_MODE` defaults to `true` here so the UI can mint
+  demo tokens, and the passwords are the demo ones. Do not expose it.
+- To queue demo jobs through the worker instead of indexing inline:
+  `docker compose --profile demo run --rm ingest-demo node dist/scripts/ingest-demo.js --enqueue`.
+
 ## Env vars
 
 | Variable          | Meaning                                                        | Default              |
@@ -265,8 +307,9 @@ primary. This is the **durable** part; the replica container is best-effort.
 **Optional replica container (`postgres-replica`, host port 5545):**
 
 ```bash
-# Start (or restart) the stack; the replica clones the primary on first boot.
-docker compose up -d postgres postgres-replica
+# The replica has its own profile; it clones the primary on first boot and
+# then streams through the replication slot `plutoman_replica`.
+docker compose --profile replica up -d postgres-replica
 docker compose logs -f postgres-replica   # watch for "starting as hot standby"
 
 # Point the app's reads at the replica (in .env), then restart the API:
@@ -287,6 +330,12 @@ docker compose exec postgres psql -U plutoman_owner -d plutoman \
 > manually (see the header comments in those two files), then start the replica.
 > The replica is **optional** — leave `READ_DATABASE_URL` unset to run entirely
 > on the primary.
+>
+> **Replica stuck on "requested WAL segment … has already been removed"?** It
+> fell further behind than the primary keeps WAL (`max_slot_wal_keep_size`,
+> 1 GB) or was cloned before the slot existed. Its data is only a copy, so
+> re-clone it: `docker compose --profile replica rm -sf postgres-replica`,
+> `docker volume rm plutoman-rag_pgdata_replica`, then start it again.
 
 ## Phase 3 — Isolation Hardening (defense in depth)
 

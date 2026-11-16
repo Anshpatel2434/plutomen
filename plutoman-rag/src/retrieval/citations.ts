@@ -1,0 +1,263 @@
+/**
+ * Citations = the sources the answer ACTUALLY relies on (golden-eval change 7).
+ *
+ * Before: `citations` was every retrieved chunk, so the wrong reports that
+ * retrieval inevitably pulls in were always "cited" — and the golden set scores
+ * a citation to the wrong document as a fail even when the value is right. The
+ * model was also asked to copy long "[document page | section]" tags, which
+ * Mistral 7B mangled ("[sop_id: 2 ...]").
+ *
+ * Now each source is numbered with a short marker ([S1], [S2], ...). Short
+ * markers are copied reliably even by small models. After generation we parse
+ * the markers the model used, return ONLY those sources as structured
+ * citations, and rewrite each marker in the answer as a readable label
+ * ("[POID-4547081947.pdf p.2]"). Markers that point at no source are dropped,
+ * never rendered as a fake citation.
+ */
+import { RetrievalHit } from "./hybrid";
+
+/** A source the answer relies on (structured, eval-checkable). */
+export interface Citation {
+  sopId: string;
+  sectionPath: string | null;
+  /** From the report's PDF twin; absent/null when ingested without one. */
+  poid?: string | null;
+  jobId?: string | null;
+  /** Printed page label: "2", "6-7", "cover". */
+  page?: string | null;
+}
+
+/**
+ * Human/eval-facing source label. The golden set cites reports as
+ * "POID-4547081947.pdf p.2", so use that form when the PDF twin is known and
+ * fall back to the source id otherwise.
+ */
+export function sourceLabel(c: Citation): string {
+  // Uploaded documents have no POID: name the file and where in it the
+  // passage is ("Inspection SOP.pdf, part 3" / "..., Section 2: Isolation > Step 2.1").
+  if (!c.poid) return c.sectionPath ? `${c.sopId}, ${c.sectionPath}` : c.sopId;
+  return c.page ? `${c.poid}.pdf p.${c.page}` : `${c.poid}.pdf`;
+}
+
+/** Marker for the source at 0-based position i: "S1", "S2", ... */
+export const marker = (i: number): string => `S${i + 1}`;
+
+/**
+ * A bracketed group that contains only source markers, ranges and separators:
+ * "[S1]", "[S1, S3]", "[S1; S2]", "[S1 and S4]", "[Source 2]", "[S1-S10]",
+ * "[S2 to S4]". Anything else in square brackets (e.g. "[note]") is left
+ * untouched.
+ */
+const MARKER_ITEM = String.raw`S(?:ource)?\s*\d+(?:\s*(?:-|–|—|to)\s*(?:S(?:ource)?\s*)?\d+)?`;
+/** Separator between markers in one group: ",", ";", "&", "and", ", and". */
+const MARKER_SEP = String.raw`(?:,\s*and|,|;|&|and)?`;
+const MARKER_GROUP = new RegExp(
+  String.raw`\[\s*${MARKER_ITEM}(?:\s*${MARKER_SEP}\s*${MARKER_ITEM})*\s*\]`,
+  "gi"
+);
+/** Markers written in prose instead of brackets: "(S5)", "sources S1, S3 and S10". */
+const MARKER_LIST = String.raw`S\d+(?:\s*(?:-|–|—|to)\s*S?\d+)?(?:\s*${MARKER_SEP}\s*S\d+(?:\s*(?:-|–|—|to)\s*S?\d+)?)*`;
+const PAREN_MARKERS = new RegExp(String.raw`\(\s*(${MARKER_LIST})\s*\)`, "g");
+const PROSE_MARKERS = new RegExp(String.raw`\b(sources?)\s+(${MARKER_LIST})\b`, "gi");
+/**
+ * A bracket whose parts each start with a marker, some followed by quoted
+ * text: "[S1: Inspection Conclusion / Test Results: Not Ok, S3]" (golden Q23).
+ * The quoted text is part of the answer, so it is kept, in parentheses, and
+ * the markers become citations.
+ */
+const ANNOTATED_GROUP = /\[\s*(S\d+\s*:[^\]]*)\]/g;
+/** The opening of a labelled marker list: "[Citations: S1, S2]", "[Sources: S3]". */
+const LABELLED_GROUP = /\[\s*(?:citations?|sources?|refs?|references?)\s*:\s*(?=S(?:ource)?\s*\d)/gi;
+
+function unannotate(_m: string, inner: string, count: number): string {
+  const parts = inner.split(/[,;]\s*(?=S\d+\b)/);
+  const markers: string[] = [];
+  const texts: string[] = [];
+  for (const part of parts) {
+    const m = /^\s*(S\d+)\s*(?::\s*([\s\S]*))?$/.exec(part);
+    // Not purely marker parts, or a marker that points at no source: leave it.
+    if (!m || Number(m[1].slice(1)) < 1 || Number(m[1].slice(1)) > count) return _m;
+    markers.push(m[1]);
+    if (m[2] && m[2].trim()) texts.push(m[2].trim().replace(/[,;]\s*$/, ""));
+  }
+  return `${texts.length ? `(${texts.join("; ")}) ` : ""}[${markers.join(", ")}]`;
+}
+/** One marker or range: group 1 = first number, group 2 = range end (if any). */
+const MARKER_NUMBER =
+  /S(?:ource)?\s*(\d+)(?:\s*(?:-|–|—|to)\s*(?:S(?:ource)?\s*)?(\d+))?/gi;
+
+/**
+ * 0-based source indices named by one marker or range ("S3" or "S1-S10"),
+ * limited to the `count` sources that exist (so "[S1-S9999]" cannot loop).
+ */
+function markerIndices(m: RegExpMatchArray, count: number): number[] {
+  const from = Number(m[1]);
+  const to = m[2] === undefined ? from : Number(m[2]);
+  const out: number[] = [];
+  for (let n = Math.max(1, Math.min(from, to)); n <= Math.min(count, Math.max(from, to)); n++) {
+    out.push(n - 1);
+  }
+  return out;
+}
+
+export interface RenderedAnswer {
+  /** Answer with markers replaced by readable source labels. */
+  text: string;
+  /** 0-based indices of the sources cited, in order of first appearance. */
+  cited: number[];
+}
+
+/** Replace markers with labels and collect which sources were cited. */
+export function renderCitations(answer: string, hits: RetrievalHit[]): RenderedAnswer {
+  const cited: number[] = [];
+  // Bracket markers the model wrote in prose, so they are cited (and never
+  // leak to the user as raw "S3" text).
+  const bracketed = answer
+    // "[Citations: S1, S2]" / "[Sources: S3]" — a labelled marker list (V14).
+    .replace(LABELLED_GROUP, "[")
+    .replace(ANNOTATED_GROUP, (m, inner: string) => unannotate(m, inner, hits.length))
+    .replace(PAREN_MARKERS, (_m, list: string) => `[${list}]`)
+    .replace(PROSE_MARKERS, (_m, word: string, list: string) => `${word} [${list}]`);
+  const text = bracketed.replace(MARKER_GROUP, (group) => {
+    const labels: string[] = [];
+    for (const m of group.matchAll(MARKER_NUMBER)) {
+      // Indices outside the sources are dropped (never rendered as a citation).
+      for (const i of markerIndices(m, hits.length)) {
+        if (!cited.includes(i)) cited.push(i);
+        const label = sourceLabel(hits[i].citation);
+        if (!labels.includes(label)) labels.push(label);
+      }
+    }
+    return labels.length > 0 ? `[${labels.join("; ")}]` : "";
+  });
+  // Tidy spaces left where an invalid marker was removed.
+  return { text: text.replace(/[ \t]+([.,;:!?])/g, "$1").replace(/[ \t]{2,}/g, " ").trim(), cited };
+}
+
+/** Structured citations for the cited sources (order of first appearance). */
+export function citedSources(hits: RetrievalHit[], cited: number[]): Citation[] {
+  return cited.map((i) => hits[i].citation);
+}
+
+// ---------------------------------------------------------------------------
+// Citation repair (golden Q18, Q06)
+// ---------------------------------------------------------------------------
+
+/** Words too common to say anything about which source a statement came from. */
+const STOP = new Set([
+  "with", "that", "this", "from", "were", "have", "been", "which", "their", "there", "these", "those",
+  "they", "what", "when", "where", "into", "also", "each", "only", "than", "then", "same", "other",
+  "report", "reports", "recorded", "record", "following", "contain", "contains", "order", "about",
+]);
+
+function contentWords(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/\[[^\]]*\]/g, " ")
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 4 && !STOP.has(w))
+  );
+}
+
+/** Share of the statement's content words that occur in a source (0..1). */
+function support(words: Set<string>, sourceWords: Set<string>): number {
+  if (words.size === 0) return 0;
+  let n = 0;
+  for (const w of words) if (sourceWords.has(w)) n++;
+  return n / words.size;
+}
+
+/** Below this, a cited source does not support the statement it is attached to. */
+const WEAK_SUPPORT = 0.2;
+/** A replacement must support at least this share of the statement... */
+const STRONG_SUPPORT = 0.5;
+/** ...and at least this many times better than the best source it replaces. */
+const BETTER_BY = 2;
+/** Statements shorter than this (in content words) are left alone. */
+const MIN_WORDS = 5;
+
+/**
+ * Point a citation at the source that actually holds the statement.
+ *
+ * A model can write the right content and cite the wrong sources: golden Q18
+ * listed the report's sections (from the contents page) but cited six
+ * "Report Details" chunks, which say nothing about sections — a wrong-document
+ * citation under the golden set's rules. For each marker group, the text since
+ * the previous group is the statement it cites. When every cited source
+ * supports under WEAK_SUPPORT of that statement's content words and one other
+ * source supports at least STRONG_SUPPORT (and BETTER_BY times more), the
+ * group is replaced by that one source. Conservative on purpose: a citation
+ * with any real support is never touched.
+ */
+export function reattributeCitations(answer: string, hits: RetrievalHit[]): string {
+  const sourceWords = hits.map((h) => contentWords(h.content));
+  let prevEnd = 0;
+  return answer.replace(MARKER_GROUP, (group: string, offset: number) => {
+    const statement = answer.slice(prevEnd, offset);
+    prevEnd = offset + group.length;
+    const words = contentWords(statement);
+    if (words.size < MIN_WORDS) return group;
+    const cited: number[] = [];
+    for (const m of group.matchAll(MARKER_NUMBER)) cited.push(...markerIndices(m, hits.length));
+    if (cited.length === 0) return group;
+    const bestCited = Math.max(...cited.map((i) => support(words, sourceWords[i])));
+    if (bestCited >= WEAK_SUPPORT) return group;
+    let best = -1;
+    let bestScore = 0;
+    sourceWords.forEach((sw, i) => {
+      const s = support(words, sw);
+      if (s > bestScore) {
+        best = i;
+        bestScore = s;
+      }
+    });
+    if (best < 0 || bestScore < STRONG_SUPPORT || bestScore < BETTER_BY * bestCited) return group;
+    return `[${marker(best)}]`;
+  });
+}
+
+/**
+ * Remove brackets that still hold a raw source marker after rendering — the
+ * model's own commentary about sources, e.g. "[S1, S3 do not mention it]"
+ * (golden Q06). A source marker must never reach the user as text.
+ */
+export function stripLeftoverMarkers(text: string): string {
+  return text
+    .replace(/\s*\[[^\][]*\bS(?:ource)?\s*\d+\b[^\][]*\]/g, "")
+    .replace(/[ \t]+([.,;:!?])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+/**
+ * Removes the model's source markers ([S3]) from a draft as it streams. A
+ * marker can arrive split across pieces, so text from an unclosed "[" is held
+ * back until it closes (or turns out not to be a marker).
+ */
+export function draftCleaner(emit: (text: string) => void): { push: (piece: string) => void; end: () => void } {
+  let held = "";
+  const flush = (all: boolean) => {
+    let out = held;
+    held = "";
+    const open = out.lastIndexOf("[");
+    if (!all && open >= 0 && out.indexOf("]", open) < 0 && out.length - open < 12) {
+      held = out.slice(open);
+      out = out.slice(0, open);
+    }
+    // The space before a marker goes with it, so it waits for what follows.
+    if (!all && out.endsWith(" ")) {
+      held = " " + held;
+      out = out.slice(0, -1);
+    }
+    out = out.replace(/ ?\[S\d+\]/g, "");
+    if (out) emit(out);
+  };
+  return {
+    push: (piece) => {
+      held += piece;
+      flush(false);
+    },
+    end: () => flush(true),
+  };
+}

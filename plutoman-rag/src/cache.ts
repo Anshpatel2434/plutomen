@@ -71,31 +71,68 @@ export async function cacheSetJSON(
 }
 
 /**
- * Invalidate ALL cached search results for a single tenant.
+ * Invalidate ALL cached search results and derived data for a single tenant.
  *
  * Called after a successful ingest upsert/delete so stale or withdrawn content
  * can never be served from cache. Uses a non-blocking SCAN cursor (never
  * KEYS, which blocks Redis) over the tenant's namespace and DELs in batches.
- * Scoped to `search:{tenantId}:*` — one tenant's ingest cannot flush another's.
+ * Scoped to `search:{tenantId}:*` and `derived:{tenantId}:*` — one tenant's
+ * ingest cannot flush another's.
  */
 export async function invalidateTenant(tenantId: string): Promise<number> {
-  const pattern = `search:${tenantId}:*`;
-  let cursor = "0";
+  // Cached /search responses AND per-tenant derived data (see
+  // getTenantDerived) — both are stale once this tenant's content changes.
   let deleted = 0;
-  do {
-    const [next, keys] = await cacheClient.scan(
-      cursor,
-      "MATCH",
-      pattern,
-      "COUNT",
-      100
-    );
-    cursor = next;
-    if (keys.length > 0) {
-      deleted += await cacheClient.del(...keys);
-    }
-  } while (cursor !== "0");
+  for (const pattern of [`search:${tenantId}:*`, `derived:${tenantId}:*`]) {
+    let cursor = "0";
+    do {
+      const [next, keys] = await cacheClient.scan(
+        cursor,
+        "MATCH",
+        pattern,
+        "COUNT",
+        100
+      );
+      cursor = next;
+      if (keys.length > 0) {
+        deleted += await cacheClient.del(...keys);
+      }
+    } while (cursor !== "0");
+  }
   return deleted;
+}
+
+/**
+ * Per-tenant DERIVED data cache: small values computed from a tenant's indexed
+ * content (e.g. the entity catalog for query filters, the search lexicon for
+ * typo correction) that are too costly to recompute on every query.
+ *
+ * Keyed `derived:{tenantId}:{name}` — tenant-namespaced exactly like the search
+ * cache, so one tenant's derived data can never be served to another — and
+ * dropped by invalidateTenant() on every ingest, with the TTL as a ceiling.
+ * Redis trouble fails OPEN to computing directly: derived data is an
+ * optimisation and must never break a request.
+ */
+export async function getTenantDerived<T>(
+  tenantId: string,
+  name: string,
+  ttlSeconds: number,
+  compute: () => Promise<T>
+): Promise<T> {
+  const key = `derived:${tenantId}:${name}`;
+  try {
+    const cached = await cacheGetJSON<T>(key);
+    if (cached !== null) return cached;
+  } catch {
+    return compute();
+  }
+  const value = await compute();
+  try {
+    await cacheSetJSON(key, value, ttlSeconds);
+  } catch {
+    // Non-critical: the next request recomputes.
+  }
+  return value;
 }
 
 /** Graceful shutdown helper. */

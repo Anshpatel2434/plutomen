@@ -32,13 +32,13 @@
 .newchat { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
 
 .layout {
-  display: grid; grid-template-columns: 1fr 360px; gap: 20px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px;
   padding: 20px; max-width: 1200px; margin: 0 auto; align-items: start;
 }
-@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
 
 /* --- conversation column --- */
-.chat-col { display: flex; flex-direction: column; min-height: 70vh; }
+.chat-col { display: flex; flex-direction: column; min-height: 70vh; min-width: 0; }
 .thread { flex: 1; display: flex; flex-direction: column; gap: 16px; padding-bottom: 12px; }
 
 .welcome { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 28px; text-align: center; }
@@ -103,3 +103,45 @@
 .src-meta { font-size: 12px; color: var(--muted); margin: 2px 0 6px; }
 .src-content { font-size: 12.5px; line-height: 1.45; color: #33404f; }
 .src-cite { font-size: 11px; color: var(--accent); margin-top: 6px; font-weight: 600; }
+
+.cited-tag { margin-left: 6px; background: var(--pass-bg); color: var(--pass); border-radius: 10px; padding: 1px 7px; font-size: 10.5px; }
+
+/* Your documents (uploads) */
+.docs .dropzone { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 16px 10px; border: 1.5px dashed var(--line); border-radius: 10px; cursor: pointer; text-align: center; margin-bottom: 10px; transition: border-color .15s, background .15s; }
+.docs .dropzone:hover, .docs .dropzone.over { border-color: var(--accent); background: #f0f5ff; }
+.docs .dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.docs .dz-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.docs .dz-hint { font-size: 11px; color: var(--muted); }
+.docs .up-error { font-size: 12px; color: var(--fail); margin-bottom: 6px; }
+.docs .doc { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.docs .doc-main { flex: 1; min-width: 0; }
+.docs .doc-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.docs .doc-meta { font-size: 11.5px; color: var(--muted); }
+.docs .doc-status.ready { color: var(--pass); font-weight: 600; }
+.docs .doc-status.failed { color: var(--fail); font-weight: 600; }
+.docs .doc-status.queued, .docs .doc-status.processing { color: #9a5b00; font-weight: 600; }
+.docs .doc-error { font-size: 11.5px; color: var(--fail); margin-top: 2px; }
+.docs .doc-del { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 4px; }
+.docs .doc-del:hover { color: var(--fail); }
+.docs .doc-confirm { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: var(--ink); }
+.docs .doc-confirm button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 2px 9px; font-size: 12px; cursor: pointer; }
+.docs .doc-confirm .doc-yes { border-color: var(--fail); color: var(--fail); }
+
+.stage { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.bubble .text.draft { color: var(--muted); }
+
+/* --- computed tables under an answer --- */
+.msg.assistant .bubble { min-width: 0; }
+.msg.assistant .bubble:has(.result) { max-width: calc(100% - 44px); }
+.result { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.result-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 8px 12px; background: #f7f9fc; border-bottom: 1px solid var(--line); }
+.result-title { font-size: 13px; font-weight: 600; color: var(--brand); }
+.result-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.result-scroll { overflow-x: auto; }
+.result table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.result th { text-align: left; font-weight: 600; color: var(--muted); padding: 7px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.result td { padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.result tr:last-child td { border-bottom: none; }
+.result td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.result-more { width: 100%; background: #f7f9fc; border: none; border-top: 1px solid var(--line); padding: 8px; font-size: 12px; color: var(--accent); cursor: pointer; }
+.coverage { margin-top: 8px; font-size: 12px; color: var(--muted); }
