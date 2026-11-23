@@ -151,7 +151,7 @@ test("a reading must come with the verdict that closes it", () => {
 const CAT: DataCatalog = {
   reports: 11, firstDate: null, lastDate: null,
   vendors: [{ name: "ABB India Limited", reports: 3 }, { name: "Siemens Ltd. – Smart Infrastructure", reports: 1 }],
-  sites: [], reportTypes: [{ name: "LT_Mini_Pillar", reports: 6 }], items: [], quantities: [],
+  sites: [], reportTypes: [{ name: "LT_Mini_Pillar", reports: 6 }], items: [], quantities: [], reportIds: [],
 };
 
 test("the question's assumptions are checked in code", () => {

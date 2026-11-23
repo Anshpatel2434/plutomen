@@ -28,6 +28,7 @@ after(async () => {
 });
 
 const CAT: DataCatalog = {
+  reportIds: [],
   reports: 4,
   firstDate: "2026-01-01",
   lastDate: "2026-02-01",

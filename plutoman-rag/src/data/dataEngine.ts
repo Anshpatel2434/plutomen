@@ -61,6 +61,8 @@ export interface DataCatalog {
   items: { reportType: string; group: string; items: string[] }[];
   /** Items of the lot that carry quantities, with the units they are recorded in. */
   quantities: { item: string; units: string[] }[];
+  /** Every report id held, so a bare number in a question can be matched to one. */
+  reportIds: string[];
 }
 
 /** Item names listed in the prompt, at most (the rest are still queryable). */
@@ -89,6 +91,10 @@ export async function loadDataCatalog(tenantId: string): Promise<DataCatalog> {
           GROUP BY 1, 2, 3 ORDER BY 1, 2, 3`,
         [tenantId]
       );
+      const ids = await c.query<{ report_id: string }>(
+        `SELECT report_id FROM inspection_reports WHERE tenant_id = $1 ORDER BY 1`,
+        [tenantId]
+      );
       const quantities = await c.query<{ item: string; units: string[] }>(
         `SELECT item, array_agg(DISTINCT unit ORDER BY unit) AS units
            FROM inspection_amounts
@@ -111,6 +117,7 @@ export async function loadDataCatalog(tenantId: string): Promise<DataCatalog> {
         reportTypes: await by("report_type"),
         items: groups.filter((g) => g.items.length > 0),
         quantities: quantities.rows,
+        reportIds: ids.rows.map((r) => r.report_id),
       };
     })
   );
@@ -749,6 +756,31 @@ export function coverageOf(tables: DataTable[], reportsTotal: number): DataAnswe
 }
 
 /**
+ * Write report numbers the way the database stores them.
+ *
+ * Users name a report by its bare number ("in this report 4562922674"), while
+ * report_id is 'POID-4562922674'. The model copies the question's spelling into
+ * the WHERE clause, the query matches nothing, the empty result is (rightly)
+ * distrusted and the turn falls back to search. Replacing the bare number with
+ * the id it belongs to is exact: only a number that IS a report id is touched,
+ * so a quantity or a PO number is left alone.
+ */
+export function canonicalReportIds(question: string, reportIds: string[]): string {
+  if (reportIds.length === 0) return question;
+  const byBare = new Map<string, string>();
+  for (const id of reportIds) {
+    const bare = id.replace(/^\D+/, "");
+    if (bare.length > 0) byBare.set(bare, id);
+  }
+  return question.replace(/\b\d{4,}\b/g, (n, at: number) => {
+    const id = byBare.get(n);
+    // Already written in full ("POID-4562922674"): leave the match alone.
+    if (!id || /[A-Za-z-]$/.test(question.slice(0, at))) return n;
+    return id;
+  });
+}
+
+/**
  * Steps 1 and 2 of the engine: have the model write the queries and run them.
  * `tables` is empty when the question is a lookup or nothing trustworthy was
  * found; `notes` may still correct what the question takes for granted. Null
@@ -765,6 +797,7 @@ export async function computeTables(
 ): Promise<Computed | null> {
   const catalog = await loadDataCatalog(tenantId);
   if (catalog.reports === 0) return null; // nothing to count
+  question = canonicalReportIds(question, catalog.reportIds);
   const notes = premiseNotes(question, catalog);
   const none: Computed = { tables: [], notes, reportsTotal: catalog.reports, catalog };
   // One named report, nothing counted or compared: no query to write. An

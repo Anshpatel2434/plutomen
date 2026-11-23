@@ -14,7 +14,7 @@ import { parseWorkbookBuffer } from "../src/ingestion/parseXlsx";
 import { chunkReport } from "../src/ingestion/chunk";
 import { buildFacts } from "../src/data/buildFacts";
 import { guardSql, MAX_ROWS } from "../src/data/sqlGuard";
-import { parsePlan, inventedNumbers, citationsFrom, renderTable, DataTable } from "../src/data/dataEngine";
+import { parsePlan, inventedNumbers, citationsFrom, renderTable, canonicalReportIds, DataTable } from "../src/data/dataEngine";
 
 import { closePool } from "../src/db";
 import { cacheClient } from "../src/cache";
@@ -175,4 +175,38 @@ test("parsePlan: NOT_RECORDED names what the database does not hold", async () =
   assert.deepEqual(parsePlan("NOT_RECORDED: field complaints."), { route: "not_recorded", missing: "field complaints" });
   assert.equal(parsePlan("LOOKUP").route, "lookup");
   assert.equal(parsePlan("TITLE: t\n```sql\nSELECT 1\n```\nNOT_RECORDED: x y").route, "data");
+});
+
+// ---------------------------------------------------------------------------
+// Report numbers as users write them
+// ---------------------------------------------------------------------------
+
+const IDS = ["POID-4562922674", "POID-4504515691", "POID-4507044338"];
+
+test("a bare report number is written the way the database stores it", () => {
+  assert.equal(
+    canonicalReportIds("in this report 4562922674: which points are not compliant?", IDS),
+    "in this report POID-4562922674: which points are not compliant?"
+  );
+});
+
+test("an id already written in full is left alone", () => {
+  const q = "which points of POID-4562922674 are not compliant?";
+  assert.equal(canonicalReportIds(q, IDS), q);
+});
+
+test("numbers that are not report ids are untouched", () => {
+  const q = "how many metres were offered under PH2026100008, and was 1234567890 cleared?";
+  assert.equal(canonicalReportIds(q, IDS), q);
+});
+
+test("every report named in one question is matched", () => {
+  assert.equal(
+    canonicalReportIds("compare 4504515691 with 4507044338", IDS),
+    "compare POID-4504515691 with POID-4507044338"
+  );
+});
+
+test("with no reports indexed the question is returned unchanged", () => {
+  assert.equal(canonicalReportIds("report 4562922674", []), "report 4562922674");
 });
