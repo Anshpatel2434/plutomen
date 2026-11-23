@@ -24,6 +24,7 @@ import { retrieve } from "./retrieve";
 import { generateAnswer, GenerationHooks } from "./generate";
 import { draftCleaner } from "./citations";
 import { condenseQuery } from "./condense";
+import { isSelfContained } from "./followUp";
 import { resolveEntities, resolveChatEntities } from "./entities";
 import {
   answerWithData,
@@ -480,9 +481,19 @@ async function chatTurn(
     config.CHAT_HISTORY_TURNS
   );
 
+  // 2a) Does this turn lean on the ones before it? A question that stands on
+  //     its own ("how many different vendors are covered?") runs as if it were
+  //     the first turn: history exists to resolve "it" and "the other one", and
+  //     applied to a standalone question it only narrows it to whatever report
+  //     came up earlier (see followUp.ts). `own` resolves the entities the user
+  //     named in THIS message — the rewrite's, if any, are added at step 4.
+  const own = await resolveChatEntities(tenantId, message, message);
+  const namesOwnEntity = Object.values(own.applied).some((v) => (v as string[] | undefined)?.length);
+  const turnHistory = isSelfContained(message, namesOwnEntity) ? [] : history;
+
   // 2b) Questions that need the records counted, listed, compared or
   //     summarised are answered from the inspection tables (data engine).
-  const data = await tryDataEngine(tenantId, message, history, generate, filters);
+  const data = await tryDataEngine(tenantId, message, turnHistory, generate, filters);
   if (data) {
     await appendMessage(tenantId, conversationId, "user", message);
     await appendMessage(tenantId, conversationId, "assistant", data.answer, data.citations);
@@ -499,13 +510,15 @@ async function chatTurn(
   }
 
   // 3) History-aware rewrite -> standalone search query. Falls back to `message`
-  //    on empty history or any Ollama error (never blocks the chat).
-  const searchQuery = await condenseQuery(history, message);
+  //    on empty history (so a standalone question is never rewritten) or any
+  //    Ollama error (never blocks the chat).
+  const searchQuery = await condenseQuery(turnHistory, message);
 
   // 4) Resolve the report(s) the turn is about — from the user's own message,
   //    plus the rewrite unless the message is contrastive ("the OTHER Finolex
   //    job") — then hybrid retrieval (RLS-scoped) on the rewritten query.
-  const resolved = await resolveChatEntities(tenantId, message, searchQuery);
+  const resolved =
+    searchQuery === message ? own : await resolveChatEntities(tenantId, message, searchQuery);
   // A follow-up ("and for Polycab?") reaches the data engine with what it stands for.
   const engineQuestion = searchQuery !== message ? `${message}\n(In full: ${searchQuery})` : message;
   const [{ hits, facts }, computed] = await Promise.all([
@@ -513,7 +526,7 @@ async function chatTurn(
       topN: topK ?? 8,
       filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
     }),
-    tryCompute(tenantId, engineQuestion, history, generate, filters, resolved.applied.jobIds ?? []),
+    tryCompute(tenantId, engineQuestion, turnHistory, generate, filters, resolved.applied.jobIds ?? []),
   ]);
 
   // 6) Grounded generation. The ORIGINAL user `message` is the question; history
@@ -521,7 +534,7 @@ async function chatTurn(
   //    grounding invariant) — answers stay grounded in the retrieved context.
   if (generate) hooks.onStage?.("writing");
   const generation = generate
-    ? await generateAnswer(message, hits, history, facts, computed ? { block: computedBlock(computed), tables: computed.tables } : null, hooks)
+    ? await generateAnswer(message, hits, turnHistory, facts, computed ? { block: computedBlock(computed), tables: computed.tables } : null, hooks)
     : { answer: null as string | null, citations: hits.map((h) => h.citation), verification: undefined };
 
   // 7) Persist both turns (user first, then assistant) so the next turn has
