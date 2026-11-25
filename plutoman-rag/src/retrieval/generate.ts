@@ -156,7 +156,8 @@ export function buildUserMessage(
   ordered: RetrievalHit[],
   history: HistoryTurn[],
   facts: AggregateFact[] = [],
-  computed = ""
+  computed = "",
+  excluded: string[] = []
 ): string {
   const lines: string[] = [];
   if (history.length > 0) {
@@ -166,6 +167,18 @@ export function buildUserMessage(
     );
     for (const t of history) lines.push(`${t.role === "user" ? "User" : "Assistant"}: ${t.content}`);
     lines.push("");
+  }
+  // The turn asked for a report OTHER than these, so they were kept out of
+  // SOURCES. Saying anything about them would be ungrounded — and citing
+  // another report's pages for it is the wrong-document error outright.
+  if (excluded.length > 0) {
+    lines.push(
+      `THE QUESTION ASKS ABOUT A REPORT OTHER THAN ${excluded.join(", ")}. ` +
+        `${excluded.length === 1 ? "That report is" : "Those reports are"} deliberately not in SOURCES: ` +
+        `answer only about the report(s) below, and do not state anything about ` +
+        `${excluded.join(", ")} — not even that something is missing from ${excluded.length === 1 ? "it" : "them"}.`,
+      ""
+    );
   }
   lines.push(...renderFacts(facts, ordered));
   // Exact tables from the data engine (src/data/), when the question needed them.
@@ -230,7 +243,9 @@ export async function generateAnswer(
   history: HistoryTurn[] = [],
   facts: AggregateFact[] = [],
   computed: ComputedInput | null = null,
-  hooks: GenerationHooks = {}
+  hooks: GenerationHooks = {},
+  /** Reports this turn asked to look past; kept out of `hits` on purpose. */
+  excluded: string[] = []
 ): Promise<GenerationResult> {
   if (hits.length === 0) {
     return {
@@ -244,7 +259,7 @@ export async function generateAnswer(
   const block = computed?.block ?? "";
   // Background tables inform the answer; only the others must be reproduced in it.
   const tables = (computed?.tables ?? []).filter((t) => !t.info);
-  const user = buildUserMessage(query, ordered, history, facts, block);
+  const user = buildUserMessage(query, ordered, history, facts, block, excluded);
   // Answers built on computed tables list more (every report, every failure).
   const maxTokens = block ? 1200 : undefined;
   const system = block ? `${SYSTEM_PROMPT}\n${COMPUTED_RULE}` : SYSTEM_PROMPT;

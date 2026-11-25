@@ -36,6 +36,16 @@ export interface RetrievalFilters {
   vendors?: string[];
   /** Report types (documents.title, e.g. "LT_Mini_Pillar") named in the question. */
   reportTypes?: string[];
+  // --- Resolved from the conversation, not from the question ---------------
+  /**
+   * Reports to leave OUT. "What about the OTHER Finolex job?" asks for a report
+   * other than the one just discussed. Saying so in the query text excludes
+   * nothing — and the Job ID in that text even pulls the unwanted report UP the
+   * keyword ranking — so the report already covered is excluded here instead.
+   */
+  excludeJobIds?: string[];
+  /** The same, by POID. */
+  excludePoids?: string[];
 }
 
 export interface RetrievalHit {
@@ -104,6 +114,16 @@ export function filterSql(f: RetrievalFilters, params: unknown[], tenantParam: s
     idClauses.push(`poid = ANY($${params.length}::text[])`);
   }
   if (idClauses.length > 0) filterClauses.push(`(${idClauses.join(" OR ")})`);
+  // Reports the conversation has already covered. A chunk with no job_id / poid
+  // (an uploaded document) is not one of them, so NULL has to stay in.
+  if (f.excludeJobIds && f.excludeJobIds.length > 0) {
+    params.push(f.excludeJobIds);
+    filterClauses.push(`(job_id IS NULL OR job_id <> ALL($${params.length}::text[]))`);
+  }
+  if (f.excludePoids && f.excludePoids.length > 0) {
+    params.push(f.excludePoids);
+    filterClauses.push(`(poid IS NULL OR poid <> ALL($${params.length}::text[]))`);
+  }
   // Vendor and report-type names narrow the INSPECTION REPORTS. Documents the
   // user uploaded (PDF / TXT / CSV / MD: procedures, specifications) have no
   // vendor or report type, and must stay searchable when a question mentions

@@ -207,6 +207,40 @@ export async function resolveEntities(tenantId: string, text: string): Promise<R
 const CONTRASTIVE = /\b(other|another|else|different|besides|except|excluding|apart from)\b/i;
 
 /**
+ * "The OTHER Finolex job", "another report", "any other lot": the contrastive
+ * word has to be pointing at a REPORT for the one already discussed to be the
+ * wrong answer. "Any other issues in this report?" uses the same word about
+ * something else entirely, and excluding that report would throw away exactly
+ * what was asked for — so the word must sit next to a report-ish noun.
+ */
+const CONTRASTIVE_REPORT =
+  /\b(other|another|different)\s+(?:(?!(?:in|of|for|on|at|to|with|from|this|that|the|a|an|and|or|but)\b)[\w.&()'-]+\s+){0,3}(report|lot|job|inspection|one|pillar|cable|drum)s?\b/i;
+
+/**
+ * Reports the conversation has already covered that this turn asks to look
+ * PAST. Empty unless the message contrasts against a report (above).
+ *
+ * Only what the earlier turns actually named counts — not the rewrite, which
+ * is the model's paraphrase — and never a report named in this message itself:
+ * "the other Finolex job, and does PH2026100005 say the same?" asks ABOUT that
+ * one. If nothing was named earlier there is nothing to exclude.
+ */
+export function excludedByContrast(
+  message: string,
+  history: { content: string }[],
+  catalog: EntityCatalog
+): { jobIds: string[]; poids: string[] } {
+  const none = { jobIds: [], poids: [] };
+  if (!CONTRASTIVE_REPORT.test(message)) return none;
+  const own = matchEntities(message, catalog);
+  const earlier = matchEntities(history.map((t) => t.content).join("\n"), catalog);
+  return {
+    jobIds: earlier.jobIds.filter((j) => !own.jobIds.includes(j)),
+    poids: earlier.poids.filter((p) => !own.poids.includes(p)),
+  };
+}
+
+/**
  * Resolve entities for a chat turn. Entities in the user's own message always
  * count. Entities that only appear in the history-aware rewrite (e.g. "and
  * what drum length was verified in it?" -> "...in POID-4504515691") are added

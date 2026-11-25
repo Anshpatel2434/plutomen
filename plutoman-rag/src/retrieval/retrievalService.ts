@@ -25,7 +25,7 @@ import { generateAnswer, GenerationHooks } from "./generate";
 import { draftCleaner } from "./citations";
 import { condenseQuery } from "./condense";
 import { isSelfContained } from "./followUp";
-import { resolveEntities, resolveChatEntities } from "./entities";
+import { resolveEntities, resolveChatEntities, excludedByContrast, loadCatalog } from "./entities";
 import {
   answerWithData,
   computeTables,
@@ -519,22 +519,51 @@ async function chatTurn(
   //    job") — then hybrid retrieval (RLS-scoped) on the rewritten query.
   const resolved =
     searchQuery === message ? own : await resolveChatEntities(tenantId, message, searchQuery);
+  // 4b) "What about the OTHER Finolex job?": the report already discussed is
+  //     the one answer that cannot be right. The rewrite says so in words
+  //     ("... not PH2026100004"), which retrieval cannot act on, so it is
+  //     excluded as a filter instead.
+  const excluded = excludedByContrast(message, turnHistory, await loadCatalog(tenantId));
+  const excluding = excluded.jobIds.length > 0 || excluded.poids.length > 0;
+  const searchFilters: RetrievalFilters = {
+    ...(filters as RetrievalFilters | undefined),
+    ...resolved.filters,
+    ...(excluded.jobIds.length ? { excludeJobIds: excluded.jobIds } : {}),
+    ...(excluded.poids.length ? { excludePoids: excluded.poids } : {}),
+  };
   // A follow-up ("and for Polycab?") reaches the data engine with what it stands for.
   const engineQuestion = searchQuery !== message ? `${message}\n(In full: ${searchQuery})` : message;
-  const [{ hits, facts }, computed] = await Promise.all([
-    retrieve(tenantId, searchQuery, {
-      topN: topK ?? 8,
-      filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
-    }),
+  const [retrieved, computed] = await Promise.all([
+    retrieve(tenantId, searchQuery, { topN: topK ?? 8, filters: searchFilters }),
     tryCompute(tenantId, engineQuestion, turnHistory, generate, filters, resolved.applied.jobIds ?? []),
   ]);
+  // There may BE no other report ("the other Siemens lot" when there is only
+  // one): answering from the one we have beats answering from nothing. The
+  // excluded report is then back in the sources, so the answer step must not
+  // be told to keep quiet about it.
+  const fellBack = retrieved.hits.length === 0 && excluding;
+  const { hits, facts } = fellBack
+    ? await retrieve(tenantId, searchQuery, {
+        topN: topK ?? 8,
+        filters: { ...(filters as RetrievalFilters | undefined), ...resolved.filters },
+      })
+    : retrieved;
+  const keptOut = fellBack ? [] : [...excluded.jobIds, ...excluded.poids];
 
   // 6) Grounded generation. The ORIGINAL user `message` is the question; history
   //    is passed only for conversational coherence (see generateAnswer's
   //    grounding invariant) — answers stay grounded in the retrieved context.
   if (generate) hooks.onStage?.("writing");
   const generation = generate
-    ? await generateAnswer(message, hits, turnHistory, facts, computed ? { block: computedBlock(computed), tables: computed.tables } : null, hooks)
+    ? await generateAnswer(
+        message,
+        hits,
+        turnHistory,
+        facts,
+        computed ? { block: computedBlock(computed), tables: computed.tables } : null,
+        hooks,
+        keptOut
+      )
     : { answer: null as string | null, citations: hits.map((h) => h.citation), verification: undefined };
 
   // 7) Persist both turns (user first, then assistant) so the next turn has
