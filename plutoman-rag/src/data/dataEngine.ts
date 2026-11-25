@@ -774,8 +774,13 @@ export function canonicalReportIds(question: string, reportIds: string[]): strin
   }
   return question.replace(/\b\d{4,}\b/g, (n, at: number) => {
     const id = byBare.get(n);
+    if (!id) return n;
+    const before = question.slice(0, at);
     // Already written in full ("POID-4562922674"): leave the match alone.
-    if (!id || /[A-Za-z-]$/.test(question.slice(0, at))) return n;
+    if (/[A-Za-z-]$/.test(before)) return n;
+    // A number the question calls a PO is a PO, even if a report id happens to
+    // carry the same digits (both are 10-digit numbers in this data).
+    if (/\b(p\.?\s?o\.?|purchase order)(\s+(no|number|#))?[\s.:#-]*$/i.test(before)) return n;
     return id;
   });
 }

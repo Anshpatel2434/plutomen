@@ -207,6 +207,17 @@ test("every report named in one question is matched", () => {
   );
 });
 
+test("a number the question calls a PO stays a PO", () => {
+  // PO numbers and report ids are both 10 digits here; only the collision is
+  // hypothetical, so pin the rule with an id used as if it were a PO.
+  const q = "what is the price per metre under PO 4562922674?";
+  assert.equal(canonicalReportIds(q, IDS), q);
+  assert.equal(
+    canonicalReportIds("purchase order no. 4562922674", IDS),
+    "purchase order no. 4562922674"
+  );
+});
+
 test("with no reports indexed the question is returned unchanged", () => {
   assert.equal(canonicalReportIds("report 4562922674", []), "report 4562922674");
 });
