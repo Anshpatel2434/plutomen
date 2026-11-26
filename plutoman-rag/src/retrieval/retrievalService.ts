@@ -491,9 +491,22 @@ async function chatTurn(
   const namesOwnEntity = Object.values(own.applied).some((v) => (v as string[] | undefined)?.length);
   const turnHistory = isSelfContained(message, namesOwnEntity) ? [] : history;
 
-  // 2b) Questions that need the records counted, listed, compared or
-  //     summarised are answered from the inspection tables (data engine).
-  const data = await tryDataEngine(tenantId, message, turnHistory, generate, filters);
+  // 2b) "What about the OTHER Finolex job?": the report already discussed is
+  //     the one answer that cannot be right. Worked out here, before anything
+  //     answers the turn, because it decides which path is allowed to.
+  const excluded = excludedByContrast(message, turnHistory, await loadCatalog(tenantId));
+  const excluding = excluded.jobIds.length > 0 || excluded.poids.length > 0;
+
+  // 2c) Questions that need the records counted, listed, compared or
+  //     summarised are answered from the inspection tables (data engine) —
+  //     but never a contrastive one. The engine answers from model-written SQL
+  //     with no way to say "any report except that one", so asked for "the
+  //     other Polycab report" it answers about the report just discussed.
+  //     Retrieval can exclude it as a filter (step 4b), so that path takes
+  //     these turns instead.
+  const data = excluding
+    ? null
+    : await tryDataEngine(tenantId, message, turnHistory, generate, filters);
   if (data) {
     await appendMessage(tenantId, conversationId, "user", message);
     await appendMessage(tenantId, conversationId, "assistant", data.answer, data.citations);
@@ -519,12 +532,9 @@ async function chatTurn(
   //    job") — then hybrid retrieval (RLS-scoped) on the rewritten query.
   const resolved =
     searchQuery === message ? own : await resolveChatEntities(tenantId, message, searchQuery);
-  // 4b) "What about the OTHER Finolex job?": the report already discussed is
-  //     the one answer that cannot be right. The rewrite says so in words
-  //     ("... not PH2026100004"), which retrieval cannot act on, so it is
+  // 4b) The rewrite says the contrast in words ("... not PH2026100004"), which
+  //     retrieval cannot act on, so the report worked out at step 2b is
   //     excluded as a filter instead.
-  const excluded = excludedByContrast(message, turnHistory, await loadCatalog(tenantId));
-  const excluding = excluded.jobIds.length > 0 || excluded.poids.length > 0;
   const searchFilters: RetrievalFilters = {
     ...(filters as RetrievalFilters | undefined),
     ...resolved.filters,
@@ -535,7 +545,12 @@ async function chatTurn(
   const engineQuestion = searchQuery !== message ? `${message}\n(In full: ${searchQuery})` : message;
   const [retrieved, computed] = await Promise.all([
     retrieve(tenantId, searchQuery, { topN: topK ?? 8, filters: searchFilters }),
-    tryCompute(tenantId, engineQuestion, turnHistory, generate, filters, resolved.applied.jobIds ?? []),
+    // Sits out a contrastive turn for the same reason as step 2c: it cannot
+    // express "not that report", and the rewrite may even hand it the one
+    // being excluded. Dormant unless DATA_MODE=augment, guarded regardless.
+    excluding
+      ? Promise.resolve(null)
+      : tryCompute(tenantId, engineQuestion, turnHistory, generate, filters, resolved.applied.jobIds ?? []),
   ]);
   // There may BE no other report ("the other Siemens lot" when there is only
   // one): answering from the one we have beats answering from nothing. The

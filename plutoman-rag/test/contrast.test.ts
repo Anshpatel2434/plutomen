@@ -107,3 +107,34 @@ test("the answer step is told not to discuss the report kept out", () => {
   const without = buildUserMessage("who was the vendor engineer there?", [hit], [], [], "");
   assert.equal(without.includes("OTHER THAN"), false);
 });
+
+test("the phrasings seen in live chat are recognised as contrastive", () => {
+  // "and in the other Polycab report?" answered about the report just
+  // discussed, because the data engine took the turn before the contrast was
+  // worked out. These pin the wording itself.
+  const earlier = turns(
+    "What outer sheath thickness was recorded for the Polycab lot under job PH2026100010?",
+    "The average outer sheath thickness is Avg 3.10 mm, Min 2.90 mm."
+  );
+  for (const q of [
+    "and in the other Polycab report?",
+    "what about the other Polycab lot?",
+    "did the other Finolex lot have the same problem?",
+    "and the other one?",
+  ]) {
+    assert.deepEqual(
+      excludedByContrast(q, earlier, CATALOG).jobIds,
+      ["PH2026100010"],
+      `should exclude the report already discussed for: ${q}`
+    );
+  }
+});
+
+test("a plain follow-up about the same report excludes nothing", () => {
+  // The guard must not fire on ordinary follow-ups, or every one of them
+  // would lose the data engine.
+  const earlier = turns("What was the Offered Qty in PH2026100010?");
+  for (const q of ["and the drum length?", "what about the weight of cable?", "is that within spec?"]) {
+    assert.deepEqual(excludedByContrast(q, earlier, CATALOG), { jobIds: [], poids: [] }, q);
+  }
+});
