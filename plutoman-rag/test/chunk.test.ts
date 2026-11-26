@@ -72,3 +72,39 @@ test("a conclusion note never changes the verdict", async () => {
   assert.match(tr.content, /All acceptance tests Pass/);
   assert.equal(tr.verdict, "NOT OK");
 });
+
+/**
+ * Held-out v3 Z03: asked what note was recorded against Observation 2 of
+ * POID-4504515691, the system answered "The report does not record a note" --
+ * about a note that is in the report. The Observations sheet keeps the note in
+ * column 5 and nothing read it, so it reached neither the chunks nor the fact
+ * table. Its sibling POID-4532592980 genuinely has no note (v3 G01, which
+ * passed), so these two pin both halves: the note must survive, and an absent
+ * note must stay absent.
+ */
+test("an observation's note survives into the chunk (Z03)", async () => {
+  // LT_Power_Cables (1).xlsx = Polycab job PH2026100010 / POID-4504515691.
+  const chunks = await chunksOf("LT_Power_Cables (1).xlsx");
+  const obs2 = chunks.find((c) => c.sectionPath === "Inspection Observations > 2");
+  assert.ok(obs2, "Observation 2 should produce a chunk");
+  assert.match(obs2!.content, /\(note: Requires vendor CAPA and re-inspection\.\)/);
+  assert.match(obs2!.content, /Critical/);
+  // The note must NOT be folded into `answer`: locateChunks matches the PDF
+  // item's value against it to find the printed page.
+  assert.equal(obs2!.answer, "Critical");
+
+  const obs1 = chunks.find((c) => c.sectionPath === "Inspection Observations > 1.");
+  assert.match(obs1!.content, /\(note: Severity elevated; lot disposition pending\.\)/);
+  assert.equal(obs1!.answer, "Major");
+});
+
+test("an observation with no note gains none (G01)", async () => {
+  // LT_Power_Cables (4).xlsx = Finolex job PH2026100004 / POID-4532592980.
+  const chunks = await chunksOf("LT_Power_Cables (4).xlsx");
+  const obs2 = chunks.find((c) => c.sectionPath === "Inspection Observations > 2");
+  assert.ok(obs2, "Observation 2 should produce a chunk");
+  assert.equal(obs2!.answer, "Critical");
+  // Nothing borrowed from a sibling report, and no empty "- " tacked on.
+  assert.doesNotMatch(obs2!.content, /CAPA|Severity elevated|No blocking issue/);
+  assert.doesNotMatch(obs2!.content, /note:/);
+});

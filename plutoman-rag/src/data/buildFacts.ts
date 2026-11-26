@@ -172,7 +172,7 @@ export function buildFacts(
   }
   report.observations.forEach((o, i) => {
     const label = o.index || `#${i + 1}`;
-    add("Observations", null, `Observation ${o.index || i + 1}`, clean(o.text), null, null, null, `Inspection Observations > ${label}`);
+    add("Observations", null, `Observation ${o.index || i + 1}`, clean(o.text), null, clean(o.notes), null, `Inspection Observations > ${label}`);
   });
 
   const c = report.conclusion;

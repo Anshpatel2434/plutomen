@@ -49,6 +49,14 @@ export interface ChecklistItem {
 export interface Observation {
   index: string; // the label in the "Observations" column, e.g. "1." / "2"
   text: string; // the free-text observation (from the "Answer" column)
+  /**
+   * The inspector's note against the observation (the "Notes" column). On the
+   * cable reports the Answer column holds only a severity ("Critical") and the
+   * substance is here -- "Requires vendor CAPA and re-inspection." Dropping it
+   * made the system answer "the report does not record a note" about notes
+   * that are in the report (held-out v3 Z03).
+   */
+  notes: string;
 }
 
 /** The conclusion sheet, teased apart into its meaningful fields. */
@@ -143,15 +151,16 @@ export async function parseWorkbookBuffer(buffer: Buffer): Promise<ParsedReport>
   const basicDetails = readItemSheet(wb.getWorksheet(SHEET.basicDetails));
   const characteristics = readItemSheet(wb.getWorksheet(SHEET.characteristics));
 
-  // --- Inspection Observations: number in col 2, text in col 3 ---
+  // --- Inspection Observations: number in col 2, text in col 3, note in col 5 ---
   const observations: Observation[] = [];
   const obsSheet = wb.getWorksheet(SHEET.observations);
   if (obsSheet) {
     obsSheet.eachRow((row, rowNumber) => {
-      if (rowNumber === 1) return; // header: Section | Observations | Answer | ...
+      if (rowNumber === 1) return; // header: Section | Observations | Answer | Measurement | Notes | Images
       const index = cellText(row.getCell(2));
       const text = cellText(row.getCell(3));
-      if (text) observations.push({ index, text });
+      const notes = cellText(row.getCell(5));
+      if (text) observations.push({ index, text, notes });
     });
   }
 

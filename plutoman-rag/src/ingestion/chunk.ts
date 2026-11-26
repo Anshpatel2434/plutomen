@@ -211,13 +211,23 @@ export function chunkReport(report: ParsedReport, ids: ReportIds = {}): ChunkedR
   // 2) Inspection Observations — free-text non-conformances / notes.
   report.observations.forEach((obs: Observation, i: number) => {
     const sectionPath = `Inspection Observations > ${obs.index || `#${i + 1}`}`;
-    const content = `${prefix}Inspection Observation ${obs.index || i + 1}: ${obs.text}`;
+    // The note goes in `content` only, the same way makeItemChunk does it.
+    // `answer` stays the bare Answer cell because locateChunks matches the PDF
+    // item's value against it to find the printed page -- putting the note in
+    // `answer` would break that match and cost every observation its page.
+    // Labelled "(note: ...)" rather than the bare "- ..." the other chunks use
+    // (buildFacts' own summary does the same). An observation's answer is often
+    // just a severity, so "Critical - Requires vendor CAPA" reads as one
+    // sentence and the model then answers "no note was recorded" while holding
+    // the note. The label is the cue that makes it answerable (v3 Z03).
+    const bits = [`${prefix}Inspection Observation ${obs.index || i + 1}: ${obs.text}`];
+    if (obs.notes) bits.push(`(note: ${obs.notes})`);
     chunks.push({
       sectionPath,
       question: `Observation ${obs.index || i + 1}`,
       answer: obs.text,
       verdict: null,
-      content,
+      content: bits.join(" "),
     });
   });
 
