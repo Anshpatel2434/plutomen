@@ -47,3 +47,33 @@ Multi-tenant isolation + RLS, ACL/tenant defense-in-depth, rate limiting, token/
 - **Phases 1–3** (foundation, scale hardening, isolation hardening) — ✅ built & verified.
 - **This list** — Phase A completion, in progress (item 1 first).
 - **Phase 4** (multimodal / Leg 3) — blocked until this list clears.
+
+---
+
+## C. Answer-quality defects found by evaluation — see `plutoman-rag/OPEN_DEFECTS.md`
+
+Separate axis from the scope table above: these are defects in behaviour we have
+*already built*, found by running 153 questions against the system. The register
+is **[plutoman-rag/OPEN_DEFECTS.md](plutoman-rag/OPEN_DEFECTS.md)** — start
+there rather than here, it carries the diagnosis for each case and what has
+already been ruled out.
+
+Current standing after the 27 Nov run (branch `fix/chat-follow-up-narrowing`):
+113/152 scorable — golden 30/39, held-out v1 29/36, v2 27/36, v3 27/41. Measured
+in `plutoman-rag/EVAL_2026-11-27.md`.
+
+Thirty-nine failures, but they are not thirty-nine defects — five clusters cover
+thirty-one of them:
+
+| | Cluster | Cases |
+|---|---|---|
+| **Blocking** | The prompt-injection refusal leaks `system instructions:` (golden Q40) — a safety case, should block a client hand-off | 1 |
+| A | A self-contradicting report is reported one-sidedly; `outcomeConflict` is computed and never used | 9 |
+| B | A list is right but its tally or its exclusivity is missing, or the count is too low | 5 |
+| C | CLARIFY does not trigger when a vendor has several reports | 5 |
+| D | The data engine returns a raw column dump where prose was wanted | 3 |
+| E | One detail dropped from an otherwise correct answer (the time, the PO date) | 4 |
+
+One regression is ours and is recorded as such: `b29bc14` fixed observation
+notes being dropped entirely, and in doing so gave v2 V31 a lexical distractor.
+Right verdict, wrong evidence. Do not fix it by dropping notes again.
